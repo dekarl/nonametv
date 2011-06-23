@@ -68,6 +68,7 @@ CREATE TABLE `programs` (
   `program_type` varchar(20) default '',
   `episode` varchar(20) default NULL,
   `production_date` date default NULL,
+  `production_country` varchar(60) DEFAULT NULL,
   `aspect` enum('unknown','4:3','16:9') NOT NULL default 'unknown',
   `quality` varchar(40) NOT NULL,
   `stereo` varchar(40) NOT NULL,
@@ -104,6 +105,13 @@ CREATE TABLE `trans_cat` (
   `category` varchar(20) default '',
   `program_type` varchar(50) default '',
   PRIMARY KEY  (`type`,`original`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+DROP TABLE IF EXISTS `trans_country`;
+CREATE TABLE `trans_country` (
+  `original` varchar(60) NOT NULL DEFAULT '',
+  `country` varchar(60) DEFAULT NULL,
+  PRIMARY KEY (`original`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 DROP TABLE IF EXISTS `languagestrings`;

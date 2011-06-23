@@ -569,6 +569,13 @@ sub WriteEntry
   {
     $d->{date} = substr( $entry->{production_date}, 0, 4 );
   }
+  
+  ## Production country
+  if( defined( $data->{production_country} ) and ($data->{production_country} =~ /\S/) )
+  {
+    push @{$d->{country}}, [$data->{production_country}, 'en'];
+  }
+  ## END
 
   if( $entry->{aspect} ne "unknown" )
   {
