@@ -33,8 +33,8 @@ BEGIN {
 		      FindParagraphs
                       norm normLatin1 normUtf8 AddCategory
                       ParseDescCatSwe FixProgrammeData
-		      ParseXml ParseXmltv
-                      MonthNumber
+		      ParseXml ParseXmltv ParseJson
+                      MonthNumber DayNumber
                       CompareArrays
                      /;
 }
@@ -455,7 +455,11 @@ $sm->AddRegexp( qr/\b(drama)*thriller\b/i,        [ 'movie', "Crime" ] );
 
 $sm->AddRegexp( qr/\bscience\s*fiction(rysare)*\b/i, [ 'movie', "SciFi" ] );
 
-$sm->AddRegexp( qr/\b(l.ng)*film\b/i,             [ 'movie', undef ] );
+$sm->AddRegexp( qr/\b(l.ng)\s*film\b/i,             [ 'movie', undef ] );
+
+$sm->AddRegexp( qr/\bbollywoodfilm\b/i,             [ 'movie', "Bollywood" ] );
+$sm->AddRegexp( qr/långfilm/i,                 [ 'movie', undef ] );
+
 
 # Kanal 5
 $sm->AddRegexp( qr/\bkomedifilm\b/i,             [ 'movie', "Comedy" ] );
@@ -540,6 +544,35 @@ sub ParseXml {
   };
   if( $@ )   {
     w "Failed to parse xml: $@";
+    return undef;
+  }
+
+  return $doc;
+}
+
+=pod 
+
+my $doc = ParseJson( $strref );
+
+Parse an json-string
+
+=cut
+
+my $json;
+
+sub ParseJson {
+  my( $cref ) = @_;
+
+  if( not defined $json ) {
+    $json = new JSON;
+  }
+  
+  my $doc;
+  eval { 
+    $doc = $json->allow_nonref->utf8->relaxed->escape_slash->loose->allow_singlequote->allow_barekey->decode($$cref); 
+  };
+  if( $@ )   {
+    w "Failed to parse json: $@";
     return undef;
   }
 
@@ -850,7 +883,7 @@ sub MonthNumber {
   } elsif( $lang =~ /^sv$/ ){
     @months_1 = qw/jan feb mar apr maj jun jul aug sep okt nov dec/;
     @months_2 = qw/januari februari mars april maj juni juli augusti september oktober november december/;
-    @months_3 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+    @months_3 = qw/jan feb mar apr maj jun jul aug sept okt nov dec/;
     @months_4 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
     @months_5 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
     @months_6 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
@@ -896,6 +929,38 @@ sub MonthNumber {
   my $lcmonth = $monthnames{lc $monthname};
 
   return $month||$lcmonth;
+}
+
+=pod
+
+Convert day name to day number
+
+=cut
+
+sub DayNumber {
+  my( $dayname , $lang ) = @_;
+
+  my( @days_1, @days_2 );
+
+  if( $lang =~ /^en$/ ){
+    @days_1 = qw/Monday Tuesday Wednesday Thursday Friday Saturday Sunday/;
+    @days_2 = qw/0 1 2 3 4 5 6/;
+  }
+
+  my %daynames = ();
+
+  for( my $i = 0; $i < scalar(@days_1); $i++ ){
+    $daynames{$days_1[$i]} = $i+1;
+  }
+
+  for( my $i = 0; $i < scalar(@days_2); $i++ ){
+    $daynames{$days_2[$i]} = $i+1;
+  }
+
+  my $day = $daynames{$dayname};
+  my $lcday = $daynames{lc $dayname};
+
+  return $day||$lcday;
 }
 
 =begin nd

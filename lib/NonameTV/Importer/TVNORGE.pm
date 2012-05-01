@@ -2,7 +2,7 @@ package NonameTV::Importer::TVNORGE;
 
 =pod
 
-This importer works for both TVNorge and FEM.
+This importer works for both TVNorge, MAX and FEM.
 It downloads per day xml files from respective channel's
 pressweb. The files are in xml-style
 
@@ -27,11 +27,13 @@ sub new {
 
 
     $self->{MinDays} = 0 unless defined $self->{MinDays};
-    $self->{MaxDays} = 4 unless defined $self->{MaxDays};
+    $self->{MaxDays} = 25 unless defined $self->{MaxDays};
 
     defined( $self->{UrlRoot} ) or die "You must specify UrlRoot";
     my $dsh = NonameTV::DataStore::Helper->new( $self->{datastore}, "Europe/Vienna" );
   	$self->{datastorehelper} = $dsh;
+  	
+  	$self->{datastore}->{augment} = 1;
 
     return $self;
 }
@@ -139,8 +141,8 @@ sub ImportContent
 	my $numepisodes =  $sc->findvalue( './numepisodes' );
 
 	# TVNorge seems to have the season in the originaltitle, weird.
-	# år 2
-  my ( $dummy, $season ) = ($title_original =~ /\b(år)\s+(\d+)/ );
+	# ï¿½r 2
+  my ( $dummy, $season ) = ($title_original =~ /(.r)\s*(\d+)$/ );
 
 
 	progress("TVNorge: $chd->{xmltvid}: $start - $title");

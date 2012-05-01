@@ -33,10 +33,11 @@ sub new {
                                      lang      => $self->{Language},
                                      cache     => $cachefile,
                                      banner    => $bannerdir,
+                                     useragent => "nonametv (http://nonametv.org)",
                                   });
     # only update if there is some data to be updated
     if (defined ($self->{tvdb}->{cache}->{Update}->{lastupdated})) {
-      $self->{tvdb}->getUpdates( 'guess' );
+     # $self->{tvdb}->getUpdates( 'guess' );
     }else{
       # on an empty cache set last update before fetching any data to
       # avoid getting the list of all updates just to see that there is
@@ -88,26 +89,29 @@ sub ParseCast( $$ ) {
 
 
 sub FillHash( $$$$ ) {
-  my( $self, $resultref, $series, $episode )=@_;
+  my( $self, $resultref, $series, $episode, $ceref )=@_;
 
   return if( !defined $episode );
 
   my $episodeid = $series->{Seasons}[$episode->{SeasonNumber}][$episode->{EpisodeNumber}];
 
   $resultref->{title} = normUtf8( norm( $series->{SeriesName} ) );
+  $resultref->{original_title} = norm($ceref->{title});
 
   if( $episode->{SeasonNumber} == 0 ){
     # it's a special
     $resultref->{episode} = undef;
+    $resultref->{subtitle} = normUtf8( norm( "Special - ".$episode->{EpisodeName} ) );
   }else{
     $resultref->{episode} = ($episode->{SeasonNumber} - 1) . ' . ' . ($episode->{EpisodeNumber} - 1) . ' .';
+    
+    # use episode title
+    $resultref->{subtitle} = normUtf8( norm( $episode->{EpisodeName} ) );
   }
 
-  $resultref->{subtitle} = normUtf8( norm( $episode->{EpisodeName} ) );
-
 # TODO skip the Overview for now, it falls back to english in a way we can not detect
-#  if( defined( $episode->{Overview} ) ) {
-#    $resultref->{description} = $episode->{Overview} . "\nQuelle: Tvdb";
+#  if( defined( $episode->{Overview} ) and ($episode->{Language} eq $self->{Language}) and !defined($resultref->{description}) ) {
+#    $resultref->{description} = normUtf8(norm($episode->{Overview})) . "\nSource: Tvdb";
 #  }
 
 # TODO add proviously-shown to carry the first showing instead of slapping it over the starting year of the series
@@ -121,24 +125,27 @@ sub FillHash( $$$$ ) {
   
   # episodepic
   if( $episode->{filename} ) {
-    $resultref->{url_image_main} = sprintf('http://thetvdb.com/banners/%s', $episode->{filename});
+#    $resultref->{url_image_main} = sprintf('http://thetvdb.com/banners/%s', $episode->{filename});
   }
 
-  $resultref->{url} = sprintf(
-    'http://thetvdb.com/?tab=episode&seriesid=%d&seasonid=%d&id=%d&lid=%d',
-    $episode->{seriesid}, $episode->{seasonid}, $episodeid, $self->{LanguageNo}
-  );
+  if(defined($episodeid)) {
+      $resultref->{url} = sprintf(
+        'http://thetvdb.com/?tab=episode&seriesid=%d&seasonid=%d&id=%d&lid=%d',
+        $episode->{seriesid}, $episode->{seasonid}, $episodeid, $self->{LanguageNo}
+      );
+  }
+  
 
   my @actors = ();
   # only add series actors if its not a special
   if( $episode->{SeasonNumber} != 0 ){
     if( $series->{Actors} ) {
-      push( @actors, split( '\|', $series->{Actors} ) );
+      push( @actors, split( '\|', norm($series->{Actors}) ) );
     }
   }
   # always add the episode cast
   if( $episode->{GuestStars} ) {
-    push( @actors, split( '\|', $episode->{GuestStars} ) );
+    push( @actors, split( '\|', norm($episode->{GuestStars}) ) );
   }
   foreach( @actors ){
     $_ = normUtf8( norm( $_ ) );
@@ -147,19 +154,19 @@ sub FillHash( $$$$ ) {
     }
   }
   @actors = grep{ defined } @actors;
+  
   if( @actors ) {
-    # replace programme's actors
-    $resultref->{actors} = join( ', ', @actors );
-  } else {
-    # remove existing actors from programme
-    $resultref->{actors} = undef;
+  	  # replace programme's actors
+	  $resultref->{actors} = join( ', ', @actors );
+	} else {
+	  # remove existing actors from programme
+	  $resultref->{actors} = undef;
   }
 
-  $resultref->{directors} = $self->ParseCast( $episode->{Director} );
-  $resultref->{writers} = $self->ParseCast( $episode->{Writer} );
+	$resultref->{directors} = $self->ParseCast( norm($episode->{Director}) );
+	$resultref->{writers} = $self->ParseCast( norm($episode->{Writer}) );
 
   $resultref->{program_type} = 'series';  
-
   # Genre
   if( $series->{Genre} ){
     if( $episode->{SeasonNumber} != 0 ){
@@ -186,11 +193,18 @@ sub FillHash( $$$$ ) {
   # episode does not have enough ratings consider using the series rating instead (if that has enough ratings)
   # if not rating qualifies leave it away.
   # the Rating at Tvdb is 1-10, turn that into 0-9 as xmltv ratings always must start at 0
-  if( $episode->{RatingCount} >= $self->{MinRatingCount} ){
-    $resultref->{'star_rating'} = $episode->{Rating}-1 . ' / 9';
-  } elsif( $series->{RatingCount} >= $self->{MinRatingCount} ){
-    $resultref->{'star_rating'} = $series->{Rating}-1 . ' / 9';
+  if(defined($episode->{RatingCount}) and defined($self->{MinRatingCount})) {
+  	if( $episode->{RatingCount} >= $self->{MinRatingCount} ){
+    	$resultref->{'star_rating'} = $episode->{Rating}-1 . ' / 9';
+  	} elsif( $series->{RatingCount} >= $self->{MinRatingCount} ){
+    	$resultref->{'star_rating'} = $series->{Rating}-1 . ' / 9';
+  	}
   }
+  
+  
+  # Extra id
+  $resultref->{extra_id} = $episode->{seriesid};
+  $resultref->{extra_id_type} = "thetvdb";
 }
 
 
@@ -206,6 +220,22 @@ sub AugmentProgram( $$$ ){
     # broken dataset on Tvdb
     return( undef, 'known bad data for SOKO Leipzig, skipping' );
   }
+  
+  # Runned before every other "matchby", so it can guess the right "matchby" by what data which is supplied.
+  if( $ruleref->{matchby} eq 'guess' ) {
+    # Subtitles, no episode
+    if(defined($ceref->{subtitle}) && !defined($ceref->{episode})) {
+    	# Match it by subtitle
+    	$ruleref->{matchby} = "episodetitle";
+    }elsif(!defined($ceref->{subtitle}) && defined($ceref->{episode})) {
+    	# The opposite, match it by episode
+    	$ruleref->{matchby} = "episodeseason";
+    }else {
+    	# Match it by seriesname (only change series name) here later on maybe?
+    	return( undef, 'couldn\'t guess the right matchby, sorry.' );
+    }
+  }
+  
 
   if( $ruleref->{matchby} eq 'episodeabs' ) {
     # match by absolute episode number from program hash. USE WITH CAUTION, NOT EVERYONE AGREES ON ANY ORDER!!!
@@ -217,16 +247,16 @@ sub AugmentProgram( $$$ ){
 
         my $series;
         if( defined( $ruleref->{remoteref} ) ) {
-          my $seriesname = $self->{tvdb}->getSeriesName( $ruleref->{remoteref} );
-          $series = $self->{tvdb}->getSeries( $seriesname );
+          my $seriesname = $self->{tvdb}->getSeriesName( $ruleref->{remoteref}, 0 );
+          $series = $self->{tvdb}->getSeries( $seriesname, 0 );
         } else {
-          $series = $self->{tvdb}->getSeries( $ceref->{title} );
+          $series = $self->{tvdb}->getSeries( $ceref->{title}, 0 );
         }
         if( defined $series ){
           my $episode = $self->{tvdb}->getEpisodeAbs( $series->{SeriesName}, $episodeabs );
 
           if( defined( $episode ) ) {
-            $self->FillHash( $resultref, $series, $episode );
+            $self->FillHash( $resultref, $series, $episode, $ceref );
           } else {
             w( "no absolute episode " . $episodeabs . " found for '" . $ceref->{title} . "'" );
           }
@@ -250,10 +280,10 @@ sub AugmentProgram( $$$ ){
 
         my $series;
         if( defined( $ruleref->{remoteref} ) ) {
-          my $seriesname = $self->{tvdb}->getSeriesName( $ruleref->{remoteref} );
-          $series = $self->{tvdb}->getSeries( $seriesname );
+          my $seriesname = $self->{tvdb}->getSeriesName( $ruleref->{remoteref}, 0 );
+          $series = $self->{tvdb}->getSeries( $seriesname, 0 );
         } else {
-          $series = $self->{tvdb}->getSeries( $ceref->{title} );
+          $series = $self->{tvdb}->getSeries( $ceref->{title}, 0 );
         }
         
         if( (defined $series)){
@@ -266,10 +296,10 @@ sub AugmentProgram( $$$ ){
         	
         	# Find season and episode
         	if(($season ne "") and ($episode ne "")) {
-        		my $episode2 = $self->{tvdb}->getEpisode($series->{SeriesName}, $season, $episode);
+        		my $episode2 = $self->{tvdb}->getEpisode($series->{SeriesName}, $season, $episode, 0);
 
           	if( defined( $episode2 ) ) {
-            	$self->FillHash( $resultref, $series, $episode2 );
+            	$self->FillHash( $resultref, $series, $episode2, $ceref );
           	} else {
             	w( "no episode " . $episode . " of season " . $season . " found for '" . $ceref->{title} . "'" );
           	}
@@ -277,18 +307,63 @@ sub AugmentProgram( $$$ ){
         }
       }
     }
-  }elsif( $ruleref->{matchby} eq 'episodetitle' ) {
+  }elsif( $ruleref->{matchby} eq 'episodeseasontitle' ) {
+    # Same as episodeseason except it also paste season from title
+    # Used like:
+  	# title: Jersey Shoe 2
+  	# remoteref: 2
+  	# ( much like Fixups setseason )
+    
+    # Check is remoteref is actually in there, or the whole shit will crash.
+    if( defined( $ruleref->{remoteref} ) ) {
+
+    	my( $season ) = $ruleref->{remoteref};
+    	
+			if( defined $ceref->{episode} ){
+      	my( $season_episode, $episode )=( $ceref->{episode} =~ m|^\s*(\d+)\s*\.\s*(\d+)\s*/?\s*\d*\s*\.\s*$| );
+      	if( (defined $episode) and (defined $season_episode) ){
+        		$episode += 1;
+        		$season_episode += 1;
+        
+        		my $seriesname = $ceref->{title};
+        		
+        		# Remove the season from title
+        		$seriesname =~ s/$season//;
+        		
+        		# Norm it.
+        		$seriesname = norm($seriesname);
+        
+            my $series = $self->{tvdb}->getSeries( $seriesname, 0 );
+        
+        		if( (defined $series)){
+        			# Find season and episode
+        			if(($season ne "") and ($episode ne "")) {
+        				my $episode2 = $self->{tvdb}->getEpisode($series->{SeriesName}, $season, $episode, 0);
+
+       	   			if( defined( $episode2 ) ) {
+     	       			$self->FillHash( $resultref, $series, $episode2, $ceref );
+          			} else {
+            			w( "no episode " . $episode . " of season " . $season . " found for '" . $seriesname . "'" );
+          			}
+         	 	  }
+        	  }
+      	}
+    	}
+   	}
+ }elsif( $ruleref->{matchby} eq 'episodetitle' ) {
     # match by episode title from program hash
 
     if( defined( $ceref->{subtitle} ) ) {
       my $series;
       if( defined( $ruleref->{remoteref} ) ) {
-        my $seriesname = $self->{tvdb}->getSeriesName( $ruleref->{remoteref} );
-        $series = $self->{tvdb}->getSeries( $seriesname );
+        my $seriesname = $self->{tvdb}->getSeriesName( $ruleref->{remoteref}, 0 );
+        $series = $self->{tvdb}->getSeries( $seriesname, 0 );
       } else {
-        $series = $self->{tvdb}->getSeries( $ceref->{title} );
+        $series = $self->{tvdb}->getSeries( $ceref->{title}, 0 );
       }
       if( defined $series ){
+        $resultref->{title} = normUtf8( norm( $series->{SeriesName} ) );
+        
         my $episodetitle = $ceref->{subtitle};
 
         $episodetitle =~ s|\s+-\s+Teil\s+(\d+)$| ($1)|;   # _-_Teil_#
@@ -297,9 +372,9 @@ sub AugmentProgram( $$$ ){
         $episodetitle =~ s|\s+\(Teil\s+(\d+)\)$| ($1)|;   # _(Teil_#)
         $episodetitle =~ s|\s+-\s+(\d+)\.\s+Teil$| ($1)|; # _-_#._Teil
 
-        my $episode = $self->{tvdb}->getEpisodeByName( $series->{SeriesName}, $episodetitle );
+        my $episode = $self->{tvdb}->getEpisodeByName( $series->{SeriesName}, $episodetitle, 0 );
         if( defined( $episode ) ) {
-          $self->FillHash( $resultref, $series, $episode );
+          $self->FillHash( $resultref, $series, $episode, $ceref );
         } else {
           w( "episode not found by title: " . $ceref->{title} . " - \"" . $episodetitle . "\"" );
         }
@@ -307,6 +382,51 @@ sub AugmentProgram( $$$ ){
         d( "series not found by title: " . $ceref->{title} );
       }
     }
+
+  }elsif( $ruleref->{matchby} eq 'seriesname' ) {
+    # get seriesname and set it (to the right name)
+    # works for channels which don't have season or episode
+    # or doesn't have the right one.
+
+      my $series;
+      if( defined( $ruleref->{remoteref} ) ) {
+        my $seriesname = $self->{tvdb}->getSeriesName( $ruleref->{remoteref}, 0 );
+        $series = $self->{tvdb}->getSeries( $seriesname, 0 );
+      } else {
+        $series = $self->{tvdb}->getSeries( $ceref->{title}, 0 );
+      }
+      if( defined $series ){
+        # Set title
+        $ceref->{title} = normUtf8( norm( $series->{SeriesName} ) );
+      } else {
+        d( "series not found by title: " . $ceref->{title} );
+      }
+
+  }elsif( $ruleref->{matchby} eq 'episodeid' ) {
+      # match by episode id from remote_ref (sid|eid)
+      my $series;
+      
+      my( $sid, $eid ) = split( / /, $ruleref->{remoteref} );
+      
+      # Get title
+      my $seriesname = $self->{tvdb}->getSeriesName( $sid, 0 );
+      $series = $self->{tvdb}->getSeries( $seriesname, 0 );
+      
+      $resultref->{description} = "hej";
+      
+      # Do the fabulous things.
+      if( defined $series ){
+        $resultref->{title} = normUtf8( norm( $series->{SeriesName} ) );
+
+        my $episode = $self->{tvdb}->getEpisodeId( $eid, 0 );
+        if( defined( $episode ) ) {
+          $self->FillHash( $resultref, $series, $episode, $ceref );
+        } else {
+          w( "episode not found by id: " . $ceref->{title} . " - \"" . $eid . "\"" );
+        }
+      } else {
+        d( "series not found by title: " . $ceref->{title} );
+      }
 
   }else{
     $result = "don't know how to match by '" . $ruleref->{matchby} . "'";
@@ -319,6 +439,5 @@ sub AugmentProgram( $$$ ){
 
   return( $resultref, $result );
 }
-
 
 1;

@@ -46,6 +46,8 @@ sub new {
 
     my $dsh = NonameTV::DataStore::Helper->new( $self->{datastore}, "Europe/Vienna" );
     $self->{datastorehelper} = $dsh;
+    
+    $self->{datastore}->{augment} = 1;
 
     $self->{datastore}->{augment} = 1;
 
@@ -229,13 +231,13 @@ sub ImportContent
 			$desc =~ s|^M[Ii]t .+?$||m;
 			$actors =~ s| u\.a\.$||;
 			# TODO clean up the list of actors
-			$ce->{actors} = $actors;
+			$ce->{actors} = norm($actors);
 		}
 		my( $directors )=( $desc =~ m|^Regie:\s+(.+?)$|m );
 		if( $directors ){
 			$desc =~ s|^Regie:\s+.+?$||m;
 			# TODO clean up the list of directors
-			$ce->{directors} = $directors;
+			$ce->{directors} = norm($directors);
 		}
 		my( $running_time )=( $desc =~ m|^(\d+\.\d+)$|m );
 		if( $running_time ){
@@ -247,7 +249,7 @@ sub ImportContent
 			$desc =~ s|^ca. \d+\'$||m;
 			# TODO do we want to add running time?
 		}
-	      $ce->{description} = norm($desc) if $desc;
+	      #$ce->{description} = norm($desc) if $desc;
 
 		my $subtitle =  $sc->findvalue( './subtitel' );
 		if( $subtitle =~ m/^(?:Folge|Kapitel|Teil)\s+\d+\s+-\s+.+$/ ){

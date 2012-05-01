@@ -60,13 +60,13 @@ sub FillCredits( $$$$$ ) {
   my @nodes = $doc->findnodes( '/OpenSearchDescription/movies/movie/cast/person[@job=\'' . $job . '\']' );
   my @credits = ( );
   foreach my $node ( @nodes ) {
-    my $name = $node->findvalue( './@name' );
+    my $name = norm($node->findvalue( './@name' ));
     if( $job eq 'Actor' ) {
       my $role = $node->findvalue( './@character' );
       if( $role ) {
         # skip roles like '-', but allow roles like G, M, Q (The Guru, James Bond)
         if( ( length( $role ) > 1 )||( $role =~ m|^[A-Z]$| ) ){
-          $name .= ' (' . $role . ')';
+          $name .= ' (' . norm($role) . ')';
         } else {
           w( 'Unlikely role \'' . $role . '\' for actor. Fix it at ' . $resultref->{url} . '/cast/edit_cast' );
         }
@@ -97,7 +97,10 @@ sub FillHash( $$$ ) {
   # FIXME shall we use the alternative name if that's what was in the guide???
   # on one hand the augmenters are here to unify various styles on the other
   # hand matching the other guides means less surprise for the users
-  $resultref->{title} = norm( $doc->findvalue( '/OpenSearchDescription/movies/movie/name' ) );
+  #
+  # Change original_name to name if you want your specific language's movie name.
+  $resultref->{title} = norm( $doc->findvalue( '/OpenSearchDescription/movies/movie/original_name' ) );
+  $resultref->{original_title} = norm($ceref->{title});
 
   # TODO shall we add the tagline as subtitle?
   $resultref->{subtitle} = undef;
@@ -106,6 +109,9 @@ sub FillHash( $$$ ) {
   my $type = $doc->findvalue( '/OpenSearchDescription/movies/movie/type' );
   if( $type eq 'movie' ) {
     $resultref->{program_type} = 'movie';
+    
+    # Remove subtitle
+    $resultref->{subtitle} = undef;
   }
 
   my $votes = $doc->findvalue( '/OpenSearchDescription/movies/movie/votes' );
@@ -134,16 +140,20 @@ sub FillHash( $$$ ) {
   # $resultref->{production_date} = $doc->findvalue( '/OpenSearchDescription/movies/movie/released' );
 
   $resultref->{url} = $doc->findvalue( '/OpenSearchDescription/movies/movie/url' );
+  $resultref->{extra_id} = $doc->findvalue( '/OpenSearchDescription/movies/movie/imdb_id' );
+  $resultref->{extra_id_type} = "themoviedb";
+	
+  	$self->FillCredits( $resultref, 'actors', $doc, 'Actor');
 
-  $self->FillCredits( $resultref, 'actors', $doc, 'Actor');
-
-#  $self->FillCredits( $resultref, 'adapters', $doc, 'Actors');
-#  $self->FillCredits( $resultref, 'commentators', $doc, 'Actors');
-  $self->FillCredits( $resultref, 'directors', $doc, 'Director');
-#  $self->FillCredits( $resultref, 'guests', $doc, 'Actors');
-#  $self->FillCredits( $resultref, 'presenters', $doc, 'Actors');
-  $self->FillCredits( $resultref, 'producers', $doc, 'Producer');
-  $self->FillCredits( $resultref, 'writers', $doc, 'Screenplay');
+#	  $self->FillCredits( $resultref, 'adapters', $doc, 'Actors');
+#  	$self->FillCredits( $resultref, 'commentators', $doc, 'Actors');
+  	$self->FillCredits( $resultref, 'directors', $doc, 'Director');
+#  	$self->FillCredits( $resultref, 'guests', $doc, 'Actors');
+#  	$self->FillCredits( $resultref, 'presenters', $doc, 'Actors');
+  	$self->FillCredits( $resultref, 'producers', $doc, 'Producer');
+  	
+  	# Writers can be in multiple "jobs", ie: Author, Writer, Screenplay and more.
+  	$self->FillCredits( $resultref, 'writers', $doc, 'Screenplay');
 
 #  print STDERR Dumper( $apiresult );
 }

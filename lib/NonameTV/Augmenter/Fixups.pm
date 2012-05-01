@@ -63,6 +63,12 @@ sub AugmentProgram( $$$ ){
 
   if( $ruleref->{matchby} eq 'setcategory' ) {
     $resultref->{'category'} = $ruleref->{remoteref};
+  }elsif( $ruleref->{matchby} eq 'guestsubtitle' ) {
+    if(defined($ceref->{guests}) and ($ceref->{guests} ne "")) {
+        $resultref->{'subtitle'} = $ceref->{guests};
+    } else {
+        w("Fixups::guestsubtitle - Nothing provided in guests.")
+    }
   }elsif( $ruleref->{matchby} eq 'setprogram_type' ) {
     $resultref->{'program_type'} = $ruleref->{remoteref};
   }elsif( $ruleref->{matchby} eq 'setsubtitle' ) {
@@ -132,7 +138,7 @@ sub AugmentProgram( $$$ ){
     # FIXME what about programmes that have been augmented in between? (rewrite of episode number / typo fixes in episode title)
     #
     my $matchdone = 0;
-    if( !$matchdone && $ceref->{'title'} && $ceref->{subtitle} && $ceref->{episode} && !$ceref->{description} ){
+    if( !$matchdone && $ceref->{'title'} && $ceref->{subtitle} && $ceref->{subtitle} ne "" && $ceref->{episode} && !$ceref->{description} ){
       # try matching by title/subtitle/episode number first
       d( 'matching by title/subtitle/episode number' );
       my ( $res, $sth ) = $self->{datastore}->sa->Sql( "
@@ -162,7 +168,7 @@ sub AugmentProgram( $$$ ){
         $matchdone=1;
       }
     }
-    if( $ceref->{'title'} && $ceref->{subtitle} && !$ceref->{description} ){
+    if( $ceref->{'title'} && $ceref->{subtitle} && $ceref->{subtitle} ne "" && !$ceref->{description} ){
       # try matching by title/subtitle next
       d( 'matching by title/subtitle' );
       my( $res, $sth ) = $self->{datastore}->sa->Sql( "

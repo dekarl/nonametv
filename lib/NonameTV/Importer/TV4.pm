@@ -69,6 +69,8 @@ use warnings;
 
 use DateTime;
 use XML::LibXML;
+use Roman;
+use Data::Dumper;
 
 use NonameTV qw/MyGet norm ParseDescCatSwe AddCategory FixProgrammeData/;
 use NonameTV::DataStore::Helper;
@@ -152,6 +154,7 @@ sub ImportContent
   {
     my $starttime = $pgm->findvalue( 'transmissiontime' );
     my $title =$pgm->findvalue( 'title' );
+    my $title_org = $pgm->findvalue( 'originaltitle' );
     my $desc = $pgm->findvalue( 'description' );
     my $ep_desc = $pgm->findvalue( 'episode_description' );
     my $pr_desc = $pgm->findvalue( 'program_description' );
@@ -167,6 +170,7 @@ sub ImportContent
     
     my $ce = {
       title       => norm($title),
+      title_org		=> norm($title_org),
       description => norm($description),
       start_time  => $starttime,
       ep_desc     => norm($ep_desc),
@@ -318,17 +322,50 @@ sub extract_episode
   my $d = $ce->{description};
 
   # Try to extract episode-information from the description.
-  my( $ep, $eps );
+  my( $ep, $eps, $ep2, $eps2 );
   my $episode;
-
-  # Del 2
-  ( $ep ) = ($d =~ /\bDel\s+(\d+)/ );
-  $episode = sprintf( " . %d .", $ep-1 ) if defined $ep;
 
   # Del 2 av 3
   ( $ep, $eps ) = ($d =~ /\bDel\s+(\d+)\s*av\s*(\d+)/ );
   $episode = sprintf( " . %d/%d . ", $ep-1, $eps ) 
     if defined $eps;
+
+	if(defined $episode and defined $eps) { 
+		$ce->{description} =~ s/Del\s+(\d+)\s+av\s+(\d+).//; 
+	}
+
+  # Del 2
+  ( $ep ) = ($d =~ /\bDel\s+(\d+)/ );
+  $episode = sprintf( " . %d .", $ep-1 ) if defined $ep;
+
+	if(defined $episode and defined $ep) { 
+		$ce->{description} =~ s/Del\s+(\d+).//; 
+	}
+
+  # Avsnitt 2 av 3
+  ( $ep2, $eps2 ) = ($d =~ /Avsnitt\s*(\d+)\s*av\s*(\d+)/ );
+  $episode = sprintf( " . %d/%d . ", $ep2-1, $eps2 ) 
+    if defined $eps2;
+    
+  if(defined $episode and defined $eps2) { 
+		$ce->{description} =~ s/Avsnitt\s+(\d+)\s+av\s+(\d+).//; 
+	}
+  
+  # Avsnitt 2
+  ( $ep2 ) = ($d =~ /Avsnitt\s*(\d+)/ );
+  $episode = sprintf( " . %d .", $ep2-1 ) if defined $ep2;
+
+	if(defined $episode and defined $ep2) { 
+		$ce->{description} =~ s/Avsnitt\s+(\d+).//; 
+	}
+	
+	# Avsnit 2
+  ( $ep2 ) = ($d =~ /Avsnit\s+(\d+)/ );
+  $episode = sprintf( " . %d .", $ep2-1 ) if defined $ep2;
+
+	if(defined $episode and defined $ep2) { 
+		$ce->{description} =~ s/Avsnit\s+(\d+).//; 
+	}
   
   if( defined( $episode ) )
   {
@@ -340,6 +377,37 @@ sub extract_episode
     $ce->{episode} = $episode;
     $ce->{program_type} = 'series';
   }
+  
+  if((defined $ce->{description}) and ($ce->{description} eq "")) {
+  	$ce->{description} = $ce->{pr_desc};
+  }
+  
+  # Get season from Roman numbers after the original title.
+  if(defined($ce->{title_org}) and defined($ce->{episode})) {
+  	my ( $original_title, $romanseason ) = ( $ce->{title_org} =~ /^(.*)\s+(.*)$/ );
+  	
+  	#my( $original_title, $romanseason ) = ($ce->{title_org} =~ /^(\s*) (\s*)$/i );
+  	#print Dumper($ce->{title_org}, $original_title, $romanseason);
+  	
+  	# Roman season found
+  	if(defined($romanseason) and isroman($romanseason)) {
+  		my $romanseason_arabic = arabic($romanseason);
+  		
+  		# Episode
+  		my( $romanepisode ) = ($ce->{episode} =~ /.\s+(\d*)\s+./ );
+  		
+  		#print Dumper($romanseason_arabic, $romanepisode);
+  		
+  		# Put it into episode field
+  		if(defined($romanseason_arabic) and defined($romanepisode)) {
+  			$ce->{episode} = sprintf( "%d . %d .", $romanseason_arabic-1, $romanepisode );
+  		}
+  	}
+  }
+  
+  # remove original title
+  delete $ce->{title_org};
+  
 }
 
 1;

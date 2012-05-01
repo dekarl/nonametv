@@ -184,7 +184,7 @@ sub ImportFlatXLS
           start_time   => $time,
 		  subtitle     => norm($subtitle),
           episode      => $episode,
-	description	=> $epg,
+	description	=> norm($epg),
         };
 
 		## Episodes and so on ( Doesn't seem to work, fix this later. )
@@ -254,6 +254,12 @@ sub ParseDate {
   } elsif( $text =~ /^(\d+)-Oct-(\d+)$/ ){
     ( $day, $year ) = ( $text =~ /^(\d+)-Oct-(\d+)$/ );
     $month = "10";
+  } elsif( $text =~ /^(\d+)-Nov-(\d+)$/ ){
+    ( $day, $year ) = ( $text =~ /^(\d+)-Nov-(\d+)$/ );
+    $month = "11";
+  } elsif( $text =~ /^(\d+)-Dec-(\d+)$/ ){
+    ( $day, $year ) = ( $text =~ /^(\d+)-Dec-(\d+)$/ );
+    $month = "12";
   } else {
     return undef;
   }

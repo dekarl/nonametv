@@ -740,6 +740,12 @@ sub WriteEntry
   {
     $d->{'star-rating'} = [ [ $data->{star_rating}, undef ] ];
   }
+  
+  if( $data->{url_image_main} )
+  {
+    $d->{picture} = [ $data->{url_image_main} ];
+  }
+  
   $w->write_programme( $d );
 }
 

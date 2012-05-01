@@ -19,7 +19,7 @@ use DateTime;
 use XML::LibXML;
 use DateTime;
 
-use NonameTV qw/MyGet norm Html2Xml ParseXml ParseDescCatSwe AddCategory/;
+use NonameTV qw/MyGet normLatin1 Html2Xml ParseXml ParseDescCatSwe AddCategory/;
 use NonameTV::DataStore::Helper;
 use NonameTV::Log qw/progress error/;
 
@@ -320,17 +320,7 @@ sub extract_extra_info
       $ce->{aspect} = "16:9";
       $sentences[$i] = "";
     }
-    elsif( my( $directors ) = ($sentences[$i] =~ /^Regi:\s*(.*)/) )
-    {
-      $ce->{directors} = parse_person_list( $directors );
-      $sentences[$i] = "";
-    }
-    elsif( my( $actors ) = ($sentences[$i] =~ /^I rollerna:\s*(.*)/ ) )
-    {
-      $ce->{actors} = parse_person_list( $actors );
-      $sentences[$i] = "";
-    }
-    elsif( $sentences[$i] =~ /^(�ven|Fr�n)
+    elsif( $sentences[$i] =~ /(.ven|Fr.n)
      ((
       \s+|
       [A-Z]\S+|
@@ -343,12 +333,46 @@ sub extract_extra_info
      \.\s*
      $/x )
     {
+    	$sentences[$i] = "";
 #      $self->parse_other_showings( $ce, $sentences[$i] );
     }
-    elsif( $sentences[$i] =~ /^Text(at|-tv)\s+sid(an)*\s+\d+\.$/ )
+    elsif( $sentences[$i] =~ /Text(at|-tv)\s+sid(an)*\s+\d+\./ )
     {
 #      $ce->{subtitle} = 'sv,teletext';
-#      $sentences[$i] = "";
+      $sentences[$i] = "";
+    }
+    elsif( $sentences[$i] =~ /Visas\s+i\.*\.$/ )
+    {
+      $sentences[$i] = "";
+    }
+    elsif( $sentences[$i] eq "HD." )
+    {
+      $ce->{quality} = "HDTV";
+    
+      # Set somethiing?
+      $sentences[$i] = "";
+    }
+    elsif( $sentences[$i] =~ /Del\s+\d+\.*/ )
+    {
+      # Del 2 av 3: Pilot (episodename)
+ 	  ( $ce->{subtitle} ) = ($sentences[$i] =~ /:\s*(.+)\./);
+ 	  
+ 	  # norm
+ 	  $ce->{subtitle} = normLatin1($ce->{subtitle});
+ 	  
+ 	  #$sentences[$i] = "";
+ 	}
+    elsif( my( $directors ) = ($sentences[$i] =~ /^Regi:\s*(.*)/) )
+    {
+      $ce->{directors} = parse_person_list( $directors );
+      $sentences[$i] = "";
+    }
+    elsif( my( $actors ) = ($sentences[$i] =~ /^I rollerna:\s*(.*)/ ) )
+    {
+      $ce->{actors} = parse_person_list( $actors );
+      $sentences[$i] = "";
+    }elsif( $sentences[$i] =~ /l.ngfilm/ ) {
+        $ce->{program_type} = "movie";
     }
   }
   
@@ -392,7 +416,7 @@ sub extract_episode
   my $d = $ce->{description};
 
   # Try to extract episode-information from the description.
-  my( $ep, $eps );
+  my( $ep, $eps, $name );
   my $episode;
 
   my $dummy;
@@ -400,6 +424,8 @@ sub extract_episode
   # Del 2
   ( $dummy, $ep ) = ($d =~ /\b(Del|Avsnitt)\s+(\d+)/ );
   $episode = sprintf( " . %d .", $ep-1 ) if defined $ep;
+
+
 
   # Del 2 av 3
   ( $dummy, $ep, $eps ) = ($d =~ /\b(Del|Avsnitt)\s+(\d+)\s*av\s*(\d+)/ );
@@ -599,7 +625,7 @@ sub norm_desc
   $str =~ s/([\.!?])\s*\x{95}\s*/$1 /g;
   $str =~ s/\s*\x{95}\s*/. /g;
 
-  return norm( $str );
+  return normLatin1( $str );
 }
 
 sub norm_title
@@ -608,8 +634,13 @@ sub norm_title
 
   # Remove strange bullets.
   $str =~ s/\x{95}/ /g;
+  
+  # Remove premiere and nightmovie and stuff like that
+  $str =~ s/Premiär://g;
+  $str =~ s/Nattfilm://g;
+  $str =~ s/Filmklubben://g;
 
-  return norm( $str );
+  return normLatin1( $str );
 }
 
 

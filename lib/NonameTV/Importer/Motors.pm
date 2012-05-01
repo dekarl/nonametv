@@ -124,6 +124,16 @@ sub ImportXLS {
       $oWkC = $oWkS->{Cells}[$iR][$columns{'Horaire'}];
       next if( ! $oWkC );
       my $time = $oWkC->Value if( $oWkC->Value );
+      
+      # Sometimes Motors somehow add 24:00:00 in the time field, that fucks the system up. 
+      my ( $hour , $min ) = ( $time =~ /^(\d+):(\d+)/ );
+      if($hour eq "24") {
+      	$hour = "00";
+      }
+      
+      $time = $hour.":".$min;
+
+			# End
 
       # title - column 2 ('Titre du produit')
       $oWkC = $oWkS->{Cells}[$iR][$columns{'Titre du produit'}];
@@ -142,12 +152,12 @@ sub ImportXLS {
 
       my $ce = {
         channel_id => $channel_id,
-        title => $title,
+        title => norm($title),
         start_time => $time,
       };
 
-      $ce->{subtitle} = $subtitle if $subtitle;
-      $ce->{description} = $description if $description;
+      $ce->{subtitle} = norm($subtitle) if $subtitle;
+      $ce->{description} = norm($description) if $description;
 
       $dsh->AddProgramme( $ce );
     }

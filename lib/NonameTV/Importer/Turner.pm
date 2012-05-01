@@ -39,6 +39,9 @@ sub new {
 
   my $dsh = NonameTV::DataStore::Helper->new( $self->{datastore} );
   $self->{datastorehelper} = $dsh;
+  
+  # use augment
+  $self->{datastore}->{augment} = 1;
 
   return $self;
 }
@@ -245,6 +248,9 @@ sub ImportXLS
           # in the memory already
           if( $title ne "x" ){
 
+						# Remove (UU) and so on
+						$title =~ s/\(.*\)//g;
+
             my $ce = {
               channel_id   => $channel_id,
               start_time => $time,
@@ -281,12 +287,52 @@ sub FlushDayData {
 
     if( @data ){
       foreach my $element (@data) {
-
+      	
+      	# Get year from description
+      	if(defined($element->{description})) {
+      		my( $year ) = ( $element->{description} =~ /^(\d+),/ );
+      		if($year) {
+      			$element->{production_date} = $year."-01-01";
+      		}
+      		
+      		# Credits
+      		if( $element->{description} =~ /Dir:/ ) {
+      			my ( $dirs, $actors ) = ( $element->{description} =~ /Dir:\s+([A-Z].+?),\s+Act:\s+([A-Z].+?),\s+Sub/ );
+						# Put them into the array
+						if(defined($dirs) and $dirs ne "") {
+							#print Dumper($dirs, $actors);
+							my @directors = split( /\s*,\s*/, $dirs );
+							$element->{directors} = join( ", ", grep( /\S/, @directors ) );
+						}
+						if(defined($actors) and $actors ne "") {
+							my @actors = split( /\s*,\s*/, $actors );
+							$element->{actors} = join( ", ", grep( /\S/, @actors ) );
+						}
+						
+						# Movies
+						$element->{program_type} = "movie";
+      		}
+      	}
+      	
         progress("Turner: $xmltvid: $element->{start_time} - $element->{title}");
 
         $dsh->AddProgramme( $element );
       }
     }
+}
+# Split a string into individual sentences.
+sub split_text
+{
+  my( $t ) = @_;
+
+  return $t if $t !~ /\./;
+
+  $t =~ s/\n/ . /g;
+  $t =~ s/\.\.\./..../;
+  my @sent = grep( /\S/, split( /\.\s+/, $t ) );
+  map { s/\s+$// } @sent;
+  $sent[-1] =~ s/\.\s*$//;
+  return @sent;
 }
 
 sub isDate {

@@ -18,6 +18,11 @@ use POSIX;
 use DateTime;
 use XML::LibXML;
 use Spreadsheet::ParseExcel;
+use Spreadsheet::XLSX;
+use Spreadsheet::XLSX::Utility2007 qw(ExcelFmt ExcelLocaltime LocaltimeExcel);
+
+use Text::Iconv;
+ my $converter = Text::Iconv -> new ("utf-8", "windows-1251");
 
 use NonameTV qw/norm/;
 use NonameTV::DataStore::Helper;
@@ -50,7 +55,7 @@ sub ImportContentFile {
 
   $self->{fileerror} = 0;
 
-  if( $file =~ /\.xls$/i ){
+  if( $file =~ /\.xlsx|.xls$/i ){
     $self->ImportXLS( $file, $chd );
   } else {
     error( "Mtve_mail: Unknown file format: $file" );
@@ -72,9 +77,11 @@ sub ImportXLS
   my $currdate = "x";
   my @ces;
   
-  progress( "Mtve_mail: $chd->{xmltvid}: Processing flat XLS $file" );
+  progress( "Mtve_mail: $chd->{xmltvid}: Processing $file" );
 
-  my $oBook = Spreadsheet::ParseExcel::Workbook->Parse( $file );
+	my $oBook;
+	if ( $file =~ /\.xlsx$/i ){ progress( "using .xlsx" );  $oBook = Spreadsheet::XLSX -> new ($file, $converter); }
+	else { $oBook = Spreadsheet::ParseExcel::Workbook->Parse( $file );  }   #  staro, za .xls
 
   # main loop
   foreach my $oWkS (@{$oBook->{Worksheet}}) {
@@ -94,7 +101,10 @@ sub ImportXLS
           if( $oWkS->{Cells}[$iR][$iC] ){
             $columns{$oWkS->{Cells}[$iR][$iC]->Value} = $iC;
 
-						$columns{'Date'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Start/ );
+						$columns{'StartDate'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Start Date/ );
+						$columns{'StartTime'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Start Time/ );
+						$columns{'EndDate'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /End Date/ );
+						$columns{'EndTime'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /End Time/ );
 						$columns{'Title'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Title/ );
           
           	
@@ -112,13 +122,27 @@ sub ImportXLS
         next;
       }
 
-
+			my $oWkDate = $oWkS->{Cells}[$iR][$columns{'StartDate'}];
+      next if( ! $oWkDate );
 
       # date & Time - column 1 ('Date')
-      my $start = $self->create_dt( $oWkS->{Cells}[$iR][$columns{'Date'}]->Value );
-      my $date = $start->ymd("-");
+      my $date = ParseDate( $oWkDate->Value );
       next if( ! $date );
-      my $time = $start->hms(":");
+      
+      my $oWkTime = $oWkS->{Cells}[$iR][$columns{'StartTime'}];
+      my $time = 0;  # fix for  12:00AM	->Value
+      $time = $oWkTime->{Val} if( $oWkTime->Value );
+
+			#Convert Excel Time -> localtime
+ 	 		$time = ExcelFmt('hh:mm', $time);
+      
+      my $enddate = ParseDate($oWkS->{Cells}[$iR][$columns{'EndDate'}]->Value);
+      my $oWkendTime = $oWkS->{Cells}[$iR][$columns{'EndTime'}];
+      my $endtime = 0;  # fix for  12:00AM	->Value
+      $endtime = $oWkendTime->{Val} if( $oWkendTime->Value );
+
+			#Convert Excel Time -> localtime
+ 	 		$endtime = ExcelFmt('hh:mm', $endtime);
 
 	  	# Startdate
       if( $date ne $currdate ) {
@@ -139,6 +163,7 @@ sub ImportXLS
       my $title = $oWkC->Value if( $oWkC->Value );
       
       # Remove *** Premiere *** 
+      $title =~ s/\*\*\* premiere \*\*\* //g; 
       $title =~ s/\*\*\* premiere\*\*\* //g; 
       $title =~ s/\*\*\* PREMIERE \*\*\* //g; 
       
@@ -147,6 +172,7 @@ sub ImportXLS
       
       # Replace and upstring
       $title =~ s/Hd/HD/;  #replace hd with HD
+      $title =~ s/Mtv/MTV/;  #replace mtv with MTV
 
 	  	# descr (column 7)
 	  	my $desc = $oWkS->{Cells}[$iR][$columns{'Description'}]->Value if $oWkS->{Cells}[$iR][$columns{'Description'}];
@@ -158,6 +184,7 @@ sub ImportXLS
         channel_id => $chd->{channel_id},
         title => norm( $title ),
         start_time => $time,
+        end_time => $endtime,
         description => norm( $desc ),
       };
       
@@ -182,26 +209,27 @@ sub ImportXLS
   return 1;
 }
 
-sub create_dt
-{
-  my $self = shift;
-  my( $str ) = @_;
-  
-  my( $year, $month, $day, $hour, $minute ) = 
-      ($str =~ /(\d+)-(\d+)-(\d+) (\d+):(\d+)$/ );
+sub ParseDate {
+  my ( $text ) = @_;
 
-  my $dt = DateTime->new( year   => $year,
-                          month  => $month,
-                          day    => $day,
-                          hour   => $hour,
-                          minute => $minute,
-                          time_zone => 'Europe/Stockholm',
-                          );
-  
-  $dt->set_time_zone( "UTC" );
-  
-  return $dt;
+  my( $year, $day, $month );
+  #print("text: $text");
+
+  # format '2011-04-13'
+  if( $text =~ /^\d{4}\-\d{2}\-\d{2}$/i ){
+    ( $year, $month, $day ) = ( $text =~ /^(\d{4})\-(\d{2})\-(\d{2})$/i );
+
+  # format '2011/05/16'
+  } elsif( $text =~ /^\d{4}\/\d{2}\/\d{2}$/i ){
+    ( $year, $month, $day ) = ( $text =~ /^(\d{4})\/(\d{2})\/(\d{2})$/i );
+  } elsif( $text =~ /^\d{1,2}-\d{1,2}-\d{2}$/ ){ # format '10-18-11' or '1-9-11'
+     ( $month, $day, $year ) = ( $text =~ /^(\d+)-(\d+)-(\d+)$/ );
+   }
+
+  $year += 2000 if $year < 100;
+
+
+	return sprintf( '%d-%02d-%02d', $year, $month, $day );
 }
-
 
 1;
