@@ -34,6 +34,8 @@ sub new {
 
   my $dsh = NonameTV::DataStore::Helper->new( $self->{datastore} );
   $self->{datastorehelper} = $dsh;
+  
+  $self->{datastore}->{augment} = 1;
 
   return $self;
 }
@@ -69,26 +71,28 @@ sub ImportFlatXLS
 
   my $oBook = Spreadsheet::ParseExcel::Workbook->Parse( $file );
 
-    my($iR, $oWkS, $oWkC);
-	
-	  my( $time, $episode );
-  my( $program_title , $program_description );
-    my @ces;
-  
+  my($iR, $oWkS, $oWkC, $time, $episode, $program_title , $program_description, @ces, $coltitle, $coldesc);
+
+  # Swedish
+  if($chd->{sched_lang} eq "sv") {
+  	$coltitle = 4;
+  	$coldesc = 12;
+  }
+
+  # Norwegian
+  if($chd->{sched_lang} eq "no") {
+    $coltitle = 5;
+    $coldesc = 13;
+  }
+
+  # Danish
+  if($chd->{sched_lang} eq "dk") {
+    $coltitle = 3;
+    $coldesc = 11;
+  }
+
   # main loop
   foreach my $oWkS (@{$oBook->{Worksheet}}) {
-	# Not using this yet.
-	#if( $oWkS->{Name} =~ /Amend/ ){
-    #  progress( "NatGeoWild: $chd->{xmltvid}: Skipping amendment: $oWkS->{Name}" );
-    #  next;
-    #}
-  
-    progress("--------- SHEET: $oWkS->{Name}");
-
-    # start from row 2
-    # the first row looks like one cell saying like "EPG DECEMBER 2007  (Yamal - HotBird)"
-    # the 2nd row contains column names Date, Time (local), Progran, Description
-    #for(my $iR = $oWkS->{MinRow} ; defined $oWkS->{MaxRow} && $iR <= $oWkS->{MaxRow} ; $iR++) {
     for(my $iR = 1 ; defined $oWkS->{MaxRow} && $iR <= $oWkS->{MaxRow} ; $iR++) {
 
       # date (column 1)
@@ -109,8 +113,6 @@ sub ImportFlatXLS
 		#	FlushDayData( $channel_xmltvid, $dsh , @ces );
 			$dsh->EndBatch( 1 );
         }
-
-
 
         my $batchid = $chd->{xmltvid} . "_" . $date;
         $dsh->StartBatch( $batchid , $chd->{id} );
@@ -136,32 +138,26 @@ sub ImportFlatXLS
 	  my $test;
 	  my $season;
 	  my $episode;
-	  
-	  # print "hejhej";
-      # program_title (column 4)
-      $oWkC = $oWkS->{Cells}[$iR][4];
 
-      # Here's where the magic happends.
-	  # Love goes out to DrForr.
-		if (defined $oWkC)
-		{
-			$test = $oWkC->Value;
-		}
-		else
-		{
-			my $oWkl = $oWkS->{Cells}[$iR][8];
-			next if( ! $oWkl );
-			$test = $oWkl->Value if $oWkl->Value;
-		}
+      # Title
+      $oWkC = $oWkS->{Cells}[$iR][$coltitle];
+
+	  if (defined $oWkC)
+	  {
+	    $title = norm($oWkC->Value);
+	  }
+	  else
+	  {
+	    my $oWkl = $oWkS->{Cells}[$iR][6];
+		next if( ! $oWkl );
+		$test = $oWkl->Value if $oWkl->Value;
+	  }
 	  
-	  $title = norm($test) if $test ne "";
-	  # If no series title, get it from episode name.
-	  
-	  
-	  $oWkC = $oWkS->{Cells}[$iR][12];
+	  $title = norm($test) if !defined($title);
+
+	  # Desc
+	  $oWkC = $oWkS->{Cells}[$iR][$coldesc];
       my $desc = $oWkC->Value;
-	  # print "hej";
-	  #print ">$program_title<\n";
 
       if( $time and $title ){
 	  
@@ -178,7 +174,23 @@ sub ImportFlatXLS
         };
 
 		## Episodes and so on ( Doesn't seem to work, fix this later. )
-
+		$oWkC = $oWkS->{Cells}[$iR][15];
+		my $episode = $oWkC->Value if( $oWkC );
+		$oWkC = $oWkS->{Cells}[$iR][14];
+		my $season = $oWkC->Value if( $oWkC );
+      
+        # Try to extract episode-information from the description.
+		if(($season) and ($season ne "")) {
+			# Episode info in xmltv-format
+			if(($episode) and ($episode ne "") and ($season ne "") and ($season ne "N/A") )
+			{
+				$ce->{episode} = sprintf( "%d . %d .", $season-1, $episode-1 );
+			}
+  
+			if( defined $ce->{episode} ) {
+				$ce->{program_type} = 'series';
+			}
+		}
 		## END
 		
         $dsh->AddProgramme( $ce );
@@ -211,20 +223,21 @@ sub ParseDate {
     ( $year, $month, $day ) = ( $text =~ /^(\d{4})-(\d{2})-(\d{2})$/i );
   }
 
-  $year += 2000 if $year < 100;
+  if(defined($year)) {
+  	$year += 2000 if $year < 100;
 
-  my $dt = DateTime->new(
-    year => $year,
-    month => $month,
-    day => $day,
-    time_zone => "Europe/Stockholm"
-      );
-
-  $dt->set_time_zone( "UTC" );
-
-
+	my $dt = DateTime->new(
+	    year => $year,
+	    month => $month,
+	    day => $day,
+	    time_zone => "Europe/Stockholm"
+	);
+	
+	$dt->set_time_zone( "UTC" );
+	
+	
 	return $dt->ymd("-");
-#return $year."-".$month."-".$day;
+  }
 }
 
 sub ParseTime {

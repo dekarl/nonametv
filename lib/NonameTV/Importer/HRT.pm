@@ -31,6 +31,9 @@ sub new {
     bless ($self, $class);
 
     defined( $self->{UrlRoot} ) or die "You must specify UrlRoot";
+    
+    # use augment
+    $self->{datastore}->{augment} = 1;
 
     return $self;
 }
@@ -91,6 +94,18 @@ sub ImportContent
     my $org_title = $sc->getElementsByTagName('sub-title');
     my $subtitle = $sc->getElementsByTagName('sub-title');
     
+    $title =~ s/\(R\)//g if $title;
+    $title =~ s/^Filmski maraton://;
+    my ($newtitle, $cat) = ($title =~ /(.*),(.*)/);
+    if(defined $cat) {
+        $title = norm($newtitle);
+    }
+
+    $title =~ s/\((\d+)\)//;
+    $title =~ s/\((\d+)\/(\d+)\)//;
+    $title =~ s/\.$//;
+    
+    
     #
     # description
     #
@@ -99,7 +114,7 @@ sub ImportContent
     #
     # genre
     #
-    my $genre = norm($sc->getElementsByTagName( 'category' ));
+    my $genre = $sc->find( './/category' );
 
     #
     # url
@@ -129,16 +144,14 @@ sub ImportContent
     }
 
     # The director and actor info are children of 'credits'
-    my $directors = $sc->getElementsByTagName( 'director' );
-    my $actors = $sc->getElementsByTagName( 'actor' );
-    my $writers = $sc->getElementsByTagName( 'writer' );
-    my $adapters = $sc->getElementsByTagName( 'adapter' );
-    my $producers = $sc->getElementsByTagName( 'producer' );
-    my $presenters = $sc->getElementsByTagName( 'presenter' );
-    my $commentators = $sc->getElementsByTagName( 'commentator' );
-    my $guests = $sc->getElementsByTagName( 'guest' );
-
-    progress("HRT: $chd->{xmltvid}: $start - $title");
+    my $directors = parse_person_list($sc->findvalue( 'credits/director' ));
+    my $actors = parse_person_list($sc->findvalue( 'credits/actor' ));
+    my $writers = parse_person_list($sc->findvalue( 'credits/writer' ));
+    my $adapters = parse_person_list($sc->findvalue( 'credits/adapter' ));
+    my $producers = parse_person_list($sc->findvalue( 'credits/producer' ));
+    my $presenters = parse_person_list($sc->findvalue( 'credits/presenter' ));
+    my $commentators = parse_person_list($sc->findvalue( 'credits/commentator' ));
+    my $guests = parse_person_list($sc->findvalue( 'credits/guest' ));
 
     my $ce = {
       channel_id   => $chd->{id},
@@ -147,7 +160,7 @@ sub ImportContent
       description  => norm($desc),
       start_time   => $start->ymd("-") . " " . $start->hms(":"),
       end_time     => $end->ymd("-") . " " . $end->hms(":"),
-      #aspect       => $sixteen_nine ? "16:9" : "4:3", 
+      #aspect       => $sixteen_nine ? "16:9" : "4:3",
       directors    => norm($directors),
       actors       => norm($actors),
       writers      => norm($writers),
@@ -164,21 +177,79 @@ sub ImportContent
       $ce->{episode} = norm($episode);
       $ce->{program_type} = 'series';
     }
+    
+    # (episodenum/of_episods)
+  	my ( $ep2, $eps2 ) = ($ce->{title} =~ /\((\d+)\/(\d+)\)/ );
+  	$ce->{episode} = sprintf( " . %d/%d . ", $ep2-1, $eps2 ) if defined $eps2;
+  	$ce->{title} =~ s/\(.*\)//g;
+    $ce->{title} = norm($ce->{title});
+    
+	my( $title_split, $genre_split ) = split( ',', norm($ce->{title}) );
+    $ce->{title} = norm($title_split);
 
-    #my($program_type, $category ) = $ds->LookupCat( "HRT", $genre );
+	my($program_type, $category ) = undef;
 
-    #AddCategory( $ce, $program_type, $category );
-
+	if(defined($genre)) {
+	    foreach my $g ($genre->get_nodelist)
+        {
+		    ($program_type, $category ) = $ds->LookupCat( "HRT", $g->to_literal );
+		    AddCategory( $ce, $program_type, $category );
+		}
+	}
+	
+	if(defined($org_title) and defined($program_type)) {
+		my ( $season ) = ($org_title =~ /(\d+)$/ );
+			
+		# Season
+		if(defined($season) and defined($program_type) and $program_type eq "series") {
+			$ce->{episode} = $season-1 . $ce->{episode};
+			
+			if("$org_title" ne "") {
+				$org_title =~ s/\d+$//g;
+				$org_title = ucfirst(lc($org_title));
+				$org_title = norm($org_title);
+				$org_title =~ s/,$//g;
+				
+				$ce->{subtitle} = undef;
+				$ce->{original_title} = norm($ce->{title});
+				$ce->{title} = norm($org_title);
+			}
+		} elsif(defined($program_type) and $program_type eq "movie" and $org_title ne "") {
+			$org_title = ucfirst(lc($org_title));
+			$ce->{original_title} = norm($org_title);
+			$ce->{subtitle} = undef;
+		}
+	}
+	
     if( defined( $production_year ) and ($production_year =~ /(\d\d\d\d)/) )
     {
       $ce->{production_date} = "$1-01-01";
     }
+    $ce->{subtitle} = undef;
+    progress("HRT: $chd->{xmltvid}: $start - $ce->{title}");
 
     $ds->AddProgramme( $ce );
   }
   
   # Success
   return 1;
+}
+
+
+sub parse_person_list
+{
+  my( $str ) = @_;
+
+  return undef if not defined $str;
+
+  my @persons = split( /\s*,\s*/, $str );
+  foreach (@persons)
+  {
+    # The character name is sometimes given . Remove it.
+    s/^.*\s+-\s+//;
+  }
+
+  return join( ";", grep( /\S/, @persons ) );
 }
 
 sub create_dt
@@ -213,15 +284,21 @@ sub create_dt
   return $dt;
 }
 
-sub FetchDataFromSite
-{
+sub Object2Url {
   my $self = shift;
   my( $batch_id, $data ) = @_;
 
   my $url = $self->{UrlRoot} . "\?$data->{grabber_info}";
 
-  my( $content, $code ) = MyGet( $url );
-  return( $content, $code );
+  return( $url, undef );
+}
+
+sub ContentExtension {
+  return 'xml';
+}
+
+sub FilteredExtension {
+  return 'xml';
 }
 
 1;

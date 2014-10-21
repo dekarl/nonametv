@@ -90,7 +90,8 @@ sub FilterContent {
   unzip $zref => \$cref;
 
   # mixed in windows line breaks
-  #$$cref =~ s|||g;
+#  $$cref =~ s|
+#||g;
 
   $cref =~ s| xmlns:ns='http://struppi.tv/xsd/'||;
   $cref =~ s| xmlns:xsd='http://www.w3.org/2001/XMLSchema'||;
@@ -203,6 +204,19 @@ sub ImportContent( $$$ ) {
     my $production_year = $xpc->findvalue( 's:infos/s:produktion/s:produktionszeitraum/s:jahr/@von' );
     if( $production_year =~ m|^\d{4}$| ){
       $ce->{production_date} = $production_year . '-01-01';
+    }
+
+    my @countries;
+    my $ns4 = $xpc->find( 's:infos/s:produktion/s:produktionsland/@laendername' );
+    foreach my $con ($ns4->get_nodelist)
+	{
+	    my ( $c ) = $self->{datastore}->LookupCountry( "Arte", $con->to_literal );
+	  	push @countries, $c if defined $c;
+	}
+
+    if( scalar( @countries ) > 0 )
+    {
+        $ce->{country} = join "/", @countries;
     }
 
     my $genre = $xpc->findvalue( 's:infos/s:klassifizierung/s:genre' );
@@ -370,9 +384,9 @@ sub AddCredits
 
   if( scalar( @people ) > 0 ) {
     if( defined( $ce->{$field} ) ) {
-      $ce->{$field} = join( ', ', $ce->{$field}, @people );
+      $ce->{$field} = join( ';', $ce->{$field}, @people );
     } else {
-      $ce->{$field} = join( ', ', @people );
+      $ce->{$field} = join( ';', @people );
     }
   }
 }

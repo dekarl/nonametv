@@ -60,13 +60,13 @@ sub FillCredits( $$$$$ ) {
   my @nodes = $doc->findnodes( '/OpenSearchDescription/movies/movie/cast/person[@job=\'' . $job . '\']' );
   my @credits = ( );
   foreach my $node ( @nodes ) {
-    my $name = $node->findvalue( './@name' );
+    my $name = norm($node->findvalue( './@name' ));
     if( $job eq 'Actor' ) {
       my $role = $node->findvalue( './@character' );
       if( $role ) {
         # skip roles like '-', but allow roles like G, M, Q (The Guru, James Bond)
         if( ( length( $role ) > 1 )||( $role =~ m|^[A-Z]$| ) ){
-          $name .= ' (' . $role . ')';
+          $name .= ' (' . norm($role) . ')';
         } else {
           w( 'Unlikely role \'' . $role . '\' for actor. Fix it at ' . $resultref->{url} . '/edit?active_nav_item=cast' );
         }
@@ -97,6 +97,11 @@ sub FillHash( $$$ ) {
   # FIXME shall we use the alternative name if that's what was in the guide???
   # on one hand the augmenters are here to unify various styles on the other
   # hand matching the other guides means less surprise for the users
+  #<<<<<<< HEAD
+  #
+  # Change original_name to name if you want your specific language's movie name.
+  #$resultref->{title} = norm( $doc->findvalue( '/OpenSearchDescription/movies/movie/original_name' ) );
+  #$resultref->{original_title} = norm($ceref->{title});
   $resultref->{title} = norm( $doc->findvalue( '/OpenSearchDescription/movies/movie/name' ) );
   $resultref->{original_title} = norm( $doc->findvalue( '/OpenSearchDescription/movies/movie/original_name' ) );
 
@@ -107,6 +112,9 @@ sub FillHash( $$$ ) {
   my $type = $doc->findvalue( '/OpenSearchDescription/movies/movie/type' );
   if( $type eq 'movie' ) {
     $resultref->{program_type} = 'movie';
+    
+    # Remove subtitle
+    $resultref->{subtitle} = undef;
   }
 
   my $votes = $doc->findvalue( '/OpenSearchDescription/movies/movie/votes' );
@@ -142,16 +150,20 @@ sub FillHash( $$$ ) {
   # $resultref->{production_date} = $doc->findvalue( '/OpenSearchDescription/movies/movie/released' );
 
   $resultref->{url} = $doc->findvalue( '/OpenSearchDescription/movies/movie/url' );
+  $resultref->{extra_id} = $doc->findvalue( '/OpenSearchDescription/movies/movie/imdb_id' );
+  $resultref->{extra_id_type} = "themoviedb";
+	
+  	$self->FillCredits( $resultref, 'actors', $doc, 'Actor');
 
-  $self->FillCredits( $resultref, 'actors', $doc, 'Actor');
-
-#  $self->FillCredits( $resultref, 'adapters', $doc, 'Actors');
-#  $self->FillCredits( $resultref, 'commentators', $doc, 'Actors');
-  $self->FillCredits( $resultref, 'directors', $doc, 'Director');
-#  $self->FillCredits( $resultref, 'guests', $doc, 'Actors');
-#  $self->FillCredits( $resultref, 'presenters', $doc, 'Actors');
-  $self->FillCredits( $resultref, 'producers', $doc, 'Producer');
-  $self->FillCredits( $resultref, 'writers', $doc, 'Screenplay');
+#	  $self->FillCredits( $resultref, 'adapters', $doc, 'Actors');
+#  	$self->FillCredits( $resultref, 'commentators', $doc, 'Actors');
+  	$self->FillCredits( $resultref, 'directors', $doc, 'Director');
+#  	$self->FillCredits( $resultref, 'guests', $doc, 'Actors');
+#  	$self->FillCredits( $resultref, 'presenters', $doc, 'Actors');
+  	$self->FillCredits( $resultref, 'producers', $doc, 'Producer');
+  	
+  	# Writers can be in multiple "jobs", ie: Author, Writer, Screenplay and more.
+  	$self->FillCredits( $resultref, 'writers', $doc, 'Screenplay');
 
 #  print STDERR Dumper( $apiresult );
 }
@@ -170,13 +182,26 @@ sub AugmentProgram( $$$ ){
     $resultref = undef;
   } elsif( $ruleref->{matchby} eq 'movieid' ) {
     $self->FillHash( $resultref, $ruleref->{remoteref}, $ceref );
+    
   } elsif( $ruleref->{matchby} eq 'title' ) {
-    # search by title and year (if present)
-
-    my $searchTerm = $ceref->{title};
+    # year and directors
     if( !$ceref->{production_date} && !$ceref->{directors}){
       return( undef,  "Year and directors unknown, not searching at themoviedb.org!" );
     }
+
+	$ruleref->{matchby} = "titleonly";
+	
+  } elsif( $ruleref->{matchby} eq 'titleonlyyear' ) {
+    # year and directors
+    if( !$ceref->{production_date} ){
+      return( undef,  "Year unknown, not searching at themoviedb.org!" );
+    }
+
+	$ruleref->{matchby} = "titleonly";
+
+  } elsif( $ruleref->{matchby} eq 'titleonly' ) {
+    # search by title and year (if present)
+    my $searchTerm = $ceref->{title};
 
     # filter characters that confuse the search api
     # FIXME check again now that we encode umlauts & co.
@@ -237,6 +262,10 @@ sub AugmentProgram( $$$ ){
       if( ( @candidates > 1 ) and ( $ceref->{directors} ) ){
         my @directors = split( /, /, $ceref->{directors} );
         my $director = $directors[0];
+        
+        # Remover - You need so the whole importer feed doesn't crash. (remove ')
+        $director =~ s/'//g;
+        
         foreach my $candidate ( @candidates ) {
           # we have to fetch the remaining candidates to peek at the directors
           my $movieId = $candidate->findvalue( 'id' );

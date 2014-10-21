@@ -301,7 +301,9 @@ sub ImportContent
     }
     else
     {
-      $ce->{title} = norm($title) || norm($org_title);
+	# Remove everything inside ()
+	$org_title =~ s/\(.*\)//g;
+      $ce->{title} = norm($org_title) || norm($title);
     }
 
     if( $sport )

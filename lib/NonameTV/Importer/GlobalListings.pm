@@ -20,6 +20,7 @@ use utf8;
 
 use DateTime;
 use XML::LibXML;
+use Data::Dumper;
 
 use NonameTV qw/MyGet File2Xml norm MonthNumber/;
 use NonameTV::DataStore::Helper;
@@ -35,10 +36,11 @@ use base 'NonameTV::Importer::BaseFile';
 # PROGRESS = 3
 # ERROR = 4
 # FATAL = 5
-my $BATCH_LOG_LEVEL = 4;
+my $BATCH_LOG_LEVEL = 1;
 
-my $command_re = "ÄNDRA|RADERA|TILL|INFOGA|EJ ÄNDRAD|" . 
-    "CHANGE|DELETE|TO|INSERT|UNCHANGED" .
+my $command_re = "ÄNDRA|RADERA|TILL|INFOGA|EJ ÄNDRAD|FLYTTA TILL|" .
+    "CHANGE|DELETE|TO|INSERT|UNCHANGED|" .
+    "ENDRE|SLETT|TIL|SETT IN|UENDRET|FLYTT TIL|" .
     "PROMIJENI|BRISI|U|UMETNI|NEPROMIJENJENO";
 
 my $time_re = '\d\d[\.:]\d\d';
@@ -57,6 +59,8 @@ sub new
   my $dsu = NonameTV::DataStore::Updater->new( $self->{datastore} );
   $self->{datastoreupdater} = $dsu;
 
+  $self->{datastore}->{augment} = 1;
+
   return $self;
 }
 
@@ -68,7 +72,8 @@ sub ImportContentFile
 #return if( $chd->{xmltvid} !~ /ngcro/ );
 
   defined( $chd->{sched_lang} ) or die "You must specify the language used for this channel (sched_lang)";
-  if( $chd->{sched_lang} !~ /^en$/ and $chd->{sched_lang} !~ /^se$/ and $chd->{sched_lang} !~ /^hr$/ ){
+  if( $chd->{sched_lang} !~ /^en$/ and $chd->{sched_lang} !~ /^sv$/ and $chd->{sched_lang} !~ /^hr$/ and $chd->{sched_lang} !~ /^no$/
+  	  and $chd->{sched_lang} !~ /^da$/ and $chd->{sched_lang} !~ /^nl$/ ){
     error( "GlobalListings: $chd->{xmltvid} Unsupported language '$chd->{sched_lang}'" );
     return;
   }
@@ -94,7 +99,8 @@ sub ImportContentFile
     return;
   }
 
-  if( $file =~ /amend/i ) {
+  # Norwegian and danish doesnt work and flip out (amd -files have a command that doesnt work yet)
+  if( $file =~ /amend|amd/i ) {
     $self->ImportAmendments( $file, $doc, $channel_xmltvid, $channel_id, $schedlang );
   }
   else {
@@ -164,7 +170,7 @@ sub ImportFull
       $type = T_DATE;
       $date = ParseDate( $text, $lang );
       if( not defined $date ) {
-	error( "GlobalListings: $channel_xmltvid: $filename Invalid date $text" );
+			error( "GlobalListings: $channel_xmltvid: $filename Invalid date $text" );
       }
       progress("GlobalListings: $channel_xmltvid: Date is: $date");
     }
@@ -185,7 +191,7 @@ sub ImportFull
     {
       $type = T_HEAD_ENG;
     }
-    elsif( $text =~ /^\s*END\s*$/ or $text =~ /^\s*KRAJ\s*$/ )
+    elsif( $text =~ /^\s*SLUT\s*$/ or $text =~ /^\s*END\s*$/ or $text =~ /^\s*KRAJ\s*$/ )
     {
       $type = T_STOP;
     }
@@ -219,7 +225,7 @@ sub ImportFull
       {
 	if( defined( $ce->{description} ) )
 	{
-	  $ce->{description} .= " " . $text;
+	  $ce->{description} .= ";;" . $text;
 	}
 	else
 	{
@@ -233,7 +239,7 @@ sub ImportFull
       {
 	extract_extra_info( $ce );
 
-        progress("GlobalListings: $channel_xmltvid: $start - $title");
+        progress("GlobalListings: $channel_xmltvid: $start - $ce->{title}");
 
         $ce->{quality} = 'HDTV' if( $channel_xmltvid =~ /hd\./ );
 
@@ -249,6 +255,7 @@ sub ImportFull
       {
 	$ce->{start_time} = $start;
 	$ce->{title} = $title;
+
 	$state = ST_FHEAD;
       }
       elsif( $type == T_DATE )
@@ -323,15 +330,19 @@ sub ImportAmendments
     my( $time, $command, $title );
 
     if( ($text =~ /^sida \d+ av \d+$/i) or
+        ($text =~ /^side \d+ av \d+$/i) or
         ($text =~ /tablån fortsätter som tidigare/i) or
+        ($text =~ /Programoversikten forblir den samme som tidligere/i) or
         ($text =~ /slut på tablå/i) or
         ($text =~ /^page \d+ of \d+$/i) or
+        ($text =~ /^pagina \d+ van \d+$/i) or
+        ($text =~ /chema gaat verder zoals eerder gepubliceerd met/i) or
         ($text =~ /schedule resumes as/i)
         )
     {
       next;
     }
-    elsif( $text =~ /^SLUT|END|KRAJ$/ )
+    elsif( $text =~ /^SLUT|END|KRAJ|SLUTT|EINDE$/ )
     {
       last;
     }
@@ -366,6 +377,7 @@ sub ImportAmendments
                        ( \( [^)]* \) )*
                      $/x ) )
     {
+
       if( $state != ST_FOUND_DATE )
       {
         die( "GlobalListings: $channel_xmltvid: $filename Wrong state for $text" );
@@ -434,7 +446,7 @@ sub parse_command
   $e->{title} = $title;
   $e->{desc} = "";
 
-  if( $command eq "ÄNDRA" or $command eq "RADERA")
+  if( $command eq "ÄNDRA" or $command eq "RADERA" or $command eq "ENDRE" or $command eq "SLETT" or $command eq "WIJZIG")
   {
     $e->{command} = "DELETEBLIND";
   }
@@ -450,13 +462,16 @@ sub parse_command
     # The titles won't match.
     $e->{command} = "DELETEBLIND";
   }
-  elsif( $command eq "TILL" or $command eq "INFOGA"    # Swedish
+  elsif(    $command eq "TILL" or $command eq "INFOGA"    # Swedish
+         or $command eq "TIL" or $command eq "SETT INN" or $command eq "SETT" # norway
          or $command eq "TO" or $command eq "INSERT"   # English
-         or $command eq "U" or $command eq "UMETNI" )  # Croatian
+         or $command eq "U" or $command eq "UMETNI"    # Croatian
+         or $command eq "IN" or $command eq "TOEVOEGEN" # Dutch
+       )
   {
     $e->{command} = "INSERT";
   }
-  elsif( $command eq "EJ ÄNDRAD" or $command eq "UNCHANGED" or $command eq "NEPROMIJENJENO" )
+  elsif( $command eq "EJ ÄNDRAD" or $command eq "UNCHANGED" or $command eq "NEPROMIJENJENO" or $command eq "ONVERANDERD" )
   {
     $e->{command} = "IGNORE";
   }
@@ -514,7 +529,7 @@ sub process_command
     }
 
     $dsu->AddProgramme( $ce );
-  }    
+  }
   elsif( $e->{command} eq "IGNORE" )
   {}
   else
@@ -527,16 +542,117 @@ sub extract_extra_info
 {
   my( $ce ) = shift;
 
-  my( $episode ) = ($ce->{title} =~ /:\s*Avsnitt\s*(\d+)$/);
-  $ce->{title} =~ s/:\s*Avsnitt\s*(\d+)$//; 
-  $ce->{episode} = sprintf(" . %d . ", $episode-1)
-    if defined( $episode );
+
+  # Episode num
+  my( $dummerino, $episode ) = ($ce->{title} =~ /:\s*(afsnit|episode|avsnitt)\s*(\d+)$/i);
+  $ce->{title} =~ s/:\s*(afsnit|episode|avsnitt)\s*(\d+)$//i;
+  $ce->{episode} = sprintf(" . %d . ", $episode-1) if defined( $episode );
+
+  ## Space to add known series that has wrong title-setting
+  $ce->{title} =~ s/Storage Wars: New York/Storage Wars New York/i;
+  $ce->{title} =~ s/Premiere ALSO APPEARING THIS MONTH://i;
+  $ce->{title} =~ s/Premiere CONTINUING SERIES://i;
+  $ce->{title} =~ s/^Premiere series: //i;
+  $ce->{title} =~ s/^Premiere //i;
+  $ce->{title} =~ s/^CHANNEL PREMIERE: //i;
+  $ce->{title} =~ s/^TERRITORY PREMIERE: //i;
+  $ce->{title} =~ s/THRILLER THURSDAY: //i;
+  $ce->{title} =~ s/^\((.*?)\)//g;
+  ## Ending
+
   ( $ce->{subtitle} ) = ($ce->{title} =~ /:\s*(.+)$/);
   $ce->{title} =~ s/:\s*(.+)$//;
+
+  # Fox norway
+  if(defined($ce->{subtitle}) and $ce->{subtitle} =~ /\(S(\d+),\s+Ep\s+(\d+)\)$/i)
+  {
+    my( $season, $episode2 ) = ($ce->{subtitle} =~ /\(S(\d+),\s+Ep\s+(\d+)\)$/i);
+    $ce->{subtitle} =~ s/\((.+)\)$//;
+    $ce->{subtitle} = norm($ce->{subtitle});
+
+    $ce->{episode} = sprintf("%d . %d . ", $season-1, $episode2-1) if defined( $episode2 );
+  }
+  # End
 
   if( $ce->{title} =~ /^\bs.ndningsslut\b$/i )
   {
     $ce->{title} = "end-of-transmission";
+  }
+
+  $ce->{title} =~ s/^PREMI.R\s+//;
+
+  $ce->{title} = norm($ce->{title});
+  $ce->{subtitle} = norm($ce->{subtitle}) if defined($ce->{subtitle});
+
+  $ce->{subtitle} =~ s/  / / if defined($ce->{subtitle}); # Sometimes it have 2 spaces, replace with 1
+
+  # FILM before is a movie
+  if($ce->{title} =~ /^FILM\s+/ ) {
+	    $ce->{program_type} = "movie";
+	    $ce->{category} = "Movies";
+        $ce->{title} =~ s/^FILM//;
+        $ce->{title} = norm($ce->{title});
+  }
+
+  # Parse actors, directors etc
+  if(defined $ce->{description}) {
+    my @sentences = split(";;", $ce->{description});
+
+    for( my $i2=0; $i2<scalar(@sentences); $i2++ )
+    {
+        my $remove = 0;
+        if( my( $season2, $episode2, $genre ) = ($sentences[$i2] =~ /^\((\d+)\/(\d+)\)/ ) )
+	    {
+	        $ce->{episode} = sprintf( "%d . %d .", $season2-1, $episode2-1 );
+	        $ce->{program_type} = "series";
+            $remove = 1;
+	    }
+
+        if( my( $country, $prodyear ) = ($sentences[$i2] =~ /,\s+(\S*)\s+(\d\d\d\d),/ ) )
+	    {
+	        $ce->{production_date} = $prodyear."-01-01";
+            $remove = 1;
+	    }
+
+        if( my( $genre2, $prodyear2 ) = ($sentences[$i2] =~ /^(\S*)\s+(\d\d\d\d),/ ) )
+	    {
+	        $ce->{production_date} = $prodyear2."-01-01";
+            $remove = 1;
+	    }
+
+        if( my( $dumperino, $directors ) = ($sentences[$i2] =~ /(direction|Regisseur):(.*),\s+Cast:/i ) )
+	    {
+          my @persons = split( /\s*,\s*/, norm($directors) );
+          foreach (@persons)
+          {
+            # The character name is sometimes given . Remove it.
+            s/^.*\s+-\s+//;
+          }
+
+          $ce->{directors} = join( ";", grep( /\S/, @persons ) );
+          $remove = 1;
+	    }
+
+        if( my( $actor ) = ($sentences[$i2] =~ /\s+Cast:(.*)$/i ) )
+	    {
+          my @actors = split( /\s*,\s*/, norm($actor) );
+          foreach (@actors)
+          {
+            # The character name is sometimes given . Remove it.
+            s/^.*\s+-\s+//;
+          }
+
+          $ce->{actors} = join( ";", grep( /\S/, @actors ) );
+          $remove = 1;
+	    }
+
+	    # remove?
+	    if($remove) {
+	        $sentences[$i2] = "";
+	    }
+    }
+
+    $ce->{description} = join_text( @sentences );
   }
 
   return;
@@ -576,6 +692,38 @@ sub isDate {
     return 1;
   }
 
+  #
+  # Swedish formats
+  #
+
+  # format 'Tuesday 1 Februari 2014'
+  if( $text =~ /^(måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag)\s*\d+\s*\D+\s*\d+$/i ){
+  	return 1;
+  }
+
+  #
+  # Danish formats
+  #
+  if( $text =~ /^(mandag|tirsdag|onsdag|torsdag|fredag|lørdag|søndag)\s*\d+\s*\D+\s*\d+$/i ){
+  	return 1;
+  }
+
+  #
+  # Norweigan formats
+  #
+
+  if( $text =~ /^(mandag|tirsdag|onsdag|torsdag|fredag|l.rdag|s.ndag)\s*\d+\s*\D+\,*\s*\d+$/i ){
+    return 1;
+  }
+
+  #
+  # Dutch formats (NL)
+  #
+
+  if( $text =~ /^(maandag|dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag)\s*\d+\s*\D+\s*\d+$/i ){
+  	return 1;
+  }
+
   return 0;
 }
 
@@ -596,14 +744,21 @@ sub ParseDate
       ( $weekday, $monthname, $day, $year ) = ( $text =~ /^(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*(\S+)\s*(\d+),\s*(\d+)$/i );
     }
 
-  } elsif( $lang =~ /^se$/ ){
+  } elsif( $lang =~ /^sv$/ ){
 
       # try 'Tisdag 3 Juni 2008'
       if( $text =~ /^(måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag)\s*\d+\s*\D+\s*\d+$/i ){
         ( $weekday, $day, $monthname, $year ) = ( $text =~ /^(\S+?)\s*(\d+)\s*(\S+?)\s*(\d+)$/ );
       }
 
-  } elsif( $lang =~ /^hr$/ ){
+  } elsif( $lang =~ /^da$/ ){
+
+      # try 'Tisdag 3 Juni 2008'
+      if( $text =~ /^(mandag|tirsdag|onsdag|torsdag|fredag|lørdag|søndag)\s*\d+\.\s*\D+\s*\d+$/i ){
+      	( $weekday, $day, $monthname, $year ) = ( $text =~ /^(\S+?)\s*(\d+)\.\s*(\S+?)\s*(\d+)$/ );
+      }
+
+   } elsif( $lang =~ /^hr$/ ){
 
       # try 'utorak 1. srpnja 2008.'
       #if( $text =~ /^(ponedjeljak|utorak|srijeda|èvrtak|petak|subota|nedjelja)\,*\s*\d+\.*\s*\D+\,*\s*\d+\.*$/i ){
@@ -611,7 +766,21 @@ sub ParseDate
         ( $weekday, $day, $monthname, $year ) = ( $text =~ /^(\S+?)\s*(\d+)\.*\s*(\S+?)\,*\s*(\d+)\.*$/ );
       }
 
-  } else {
+   } elsif( $lang =~ /^no$/ ){
+
+      # try 'Tisdag 3 Juni, 2008'
+      if( $text =~ /^(mandag|tirsdag|onsdag|torsdag|fredag|l.rdag|s.ndag)\s*\d+\.\s*\D+,\s*\d+$/i ){
+      	( $weekday, $day, $monthname, $year ) = ( $text =~ /^(\S+?)\s*(\d+)\.\s*(\S+?),\s*(\d+)$/ );
+      }
+
+   } elsif( $lang =~ /^nl$/ ){
+
+      # try 'Tisdag 3 Juni 2008'
+      if( $text =~ /^(maandag|dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag)\s*\d+\s*\D+\s*\d+$/i ){
+      	( $weekday, $day, $monthname, $year ) = ( $text =~ /^(\S+?)\s*(\d+)\s*(\S+?)\s*(\d+)$/ );
+      }
+
+   } else {
     return undef;
   }
   
@@ -685,6 +854,14 @@ sub create_dt
   $dt->set_time_zone( "UTC" );
 
   return $dt;
+}
+
+sub join_text
+{
+  my $t = join( " ", grep( /\S/, @_ ) );
+  $t =~ s/::/../g;
+
+  return $t;
 }
 
 1;

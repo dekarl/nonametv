@@ -1,0 +1,209 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use FindBin;
+use lib "$FindBin::Bin/../../lib";
+
+use Mail::Box;
+use Mail::Box::Manager;
+
+my $maildir = "/home/jnylen/maildir/";
+my $infoldername = ".Projects/xmltv-data-in";
+my $targetprefix = ".Projects/.NonameTV-Data.";
+
+my $folders;
+
+my $mgr = Mail::Box::Manager->new();
+
+my $rootfolder = $mgr->open( type => 'maildir', folder => $maildir );
+#my @subs = $rootfolder->listSubFolders();
+#print join "\n", @subs;
+
+my $infolder = $rootfolder->openSubFolder( $infoldername, access => 'rw' );
+
+foreach my $msg ($infolder->messages) {
+  next if $msg->isDeleted();
+  my @from = $msg->from;
+  my $fromaddr = $from[0]->format;
+  if( $fromaddr =~ /\@mtvne.com/i ) {
+    MoveMessage( $msg, "MTV" );
+  }
+  elsif( $fromaddr =~ /\@vimn.com/i ) {
+    MoveMessage( $msg, "MTV" );
+  }
+  elsif( $fromaddr =~ /\@disney.com/i ) {
+    MoveMessage( $msg, "Disney" );
+  }
+  elsif( $fromaddr =~ /\@googlemail.com/i ) {
+    MoveMessage( $msg, "Gmail" );
+  }
+  elsif( $fromaddr =~ /\@protv.ro/i ) {
+    MoveMessage( $msg, "Gmail" );
+  }
+  elsif( $fromaddr =~ /\@france24.com/i ) {
+    MoveMessage( $msg, "France24" );
+  }
+  elsif( $fromaddr =~ /\@francemm.com/i ) {
+    MoveMessage( $msg, "France24" );
+  }
+  elsif( $fromaddr =~ /\@playboytv.co.uk/i ) {
+    MoveMessage( $msg, "Playboy" );
+  }
+  elsif( $fromaddr =~ /\@playboy.com/i ) {
+    MoveMessage( $msg, "Playboy" );
+  }
+  elsif( $fromaddr =~ /\@playboyplus.com/i ) {
+    MoveMessage( $msg, "Playboy" );
+  }
+  elsif( $fromaddr =~ /\@sapphiremedia.com/i ) {
+    MoveMessage( $msg, "Hustler" );
+  }
+  elsif( $fromaddr =~ /\@globallistings.info/i ) {
+    MoveMessage( $msg, "GlobalListings" );
+  }
+  elsif( $fromaddr =~ /\@kanal10.se/i ) {
+    MoveMessage( $msg, "Kanal10" );
+  }
+  elsif( $fromaddr =~ /\@oppnakanalengoteborg.se/i ) {
+    MoveMessage( $msg, "OKGoteborg" );
+  }
+  elsif( $fromaddr =~ /\@nauticalchannel.net/i ) {
+    MoveMessage( $msg, "YaS" );
+  }
+  elsif( $fromaddr =~ /\@nauticalchannel.com/i ) {
+    MoveMessage( $msg, "YaS" );
+  }
+  elsif( $fromaddr =~ /\@motorstv.com/i ) {
+    MoveMessage( $msg, "Motors" );
+  }
+  elsif( $fromaddr =~ /\@ebs.tv/i ) {
+    MoveMessage( $msg, "EBS" );
+  }
+  elsif( $fromaddr =~ /\@sbstv.se/i ) {
+    MoveMessage( $msg, "SBSTV" );
+  }
+  elsif( $fromaddr =~ /\@sbsdiscovery.se/i ) {
+    MoveMessage( $msg, "SBSTV" );
+  }
+  elsif( $fromaddr =~ /\@fox.com/i ) {
+    MoveMessage( $msg, "FOX" );
+  }
+  elsif( $fromaddr =~ /\@cnbc.com/i ) {
+    MoveMessage( $msg, "CNBC" );
+  }
+  elsif( $fromaddr =~ /\@out.tv/i ) {
+    MoveMessage( $msg, "OUTTV" );
+  }
+  elsif( $fromaddr =~ /\@tv5monde.org/i ) {
+    MoveMessage( $msg, "TV5Monde" );
+  }
+  elsif( $fromaddr =~ /\@travelchannel.co.uk/i ) {
+    MoveMessage( $msg, "TravelChannel" );
+  }
+  elsif( $fromaddr =~ /\@turner.com/i ) {
+    MoveMessage( $msg, "Turner" );
+  }
+  elsif( $fromaddr =~ /\@mediateket.no/i ) {
+    MoveMessage( $msg, "Fatstone" );
+  }
+  elsif( $fromaddr =~ /\@fatstone.com/i ) {
+    MoveMessage( $msg, "Fatstone" );
+  }
+  elsif( $fromaddr =~ /\@pokerchanneleurope.com/i ) {
+    MoveMessage( $msg, "PokerChannel" );
+  }
+  elsif( $fromaddr =~ /\@ginx.tv/i ) {
+    MoveMessage( $msg, "PokerChannel" );
+  }
+  elsif( $fromaddr =~ /\@lifestyletv.se/i ) {
+    MoveMessage( $msg, "LifestyleTV" );
+  }
+  elsif( $fromaddr =~ /\@tvn.cl/i ) {
+    MoveMessage( $msg, "TVChile" );
+  }
+  elsif( $fromaddr =~ /\@fyc.pt/i ) {
+    MoveMessage( $msg, "FuelTV" );
+  }
+  elsif( $fromaddr =~ /\@luxe.tv/i ) {
+    MoveMessage( $msg, "LuxeTV" );
+  }
+  elsif( $fromaddr =~ /\@god.tv/i ) {
+    MoveMessage( $msg, "GodTV" );
+  }
+  elsif( $fromaddr =~ /\@mezzo.fr/i ) {
+    MoveMessage( $msg, "Mezzo" );
+  }
+  elsif( $fromaddr =~ /\@hightv.tv/i ) {
+    MoveMessage( $msg, "HighTV" );
+  }
+  elsif( $fromaddr =~ /\@wildtv.ca/i ) {
+  	MoveMessage( $msg, "WildTV" );
+  }
+  elsif( $fromaddr =~ /\@tv8norge.no/i ) {
+    MoveMessage( $msg, "TV8Norge" );
+  }
+  elsif( $fromaddr =~ /\@pangroup.com/i ) {
+    MoveMessage( $msg, "TV8Norge" );
+  }
+  elsif( $fromaddr =~ /\@euronews.com/i ) {
+    MoveMessage( $msg, "Euronews" );
+  }
+  elsif( $fromaddr =~ /\@rtl2.de/i ) {
+    MoveMessage( $msg, "RTL2" );
+  }
+  elsif( $fromaddr =~ /\@gospel.tv/i ) {
+    MoveMessage( $msg, "Gospel" );
+  }
+  elsif( $fromaddr =~ /\@dw.de/i ) {
+    MoveMessage( $msg, "DWDE" );
+  }
+  elsif( $fromaddr =~ /\@horseandcountry.tv/i ) {
+    MoveMessage( $msg, "HaC" );
+  }
+  elsif( $fromaddr =~ /\@europeantvmedia.eu/i ) {
+    MoveMessage( $msg, "ETVMedia" );
+  }
+  elsif( $fromaddr =~ /\@europeantvmedia.com/i ) {
+    MoveMessage( $msg, "ETVMedia" );
+  }
+  elsif( $fromaddr =~ /\@1tvrus.com/i ) {
+    MoveMessage( $msg, "ETVMedia" );
+  }
+  elsif( $fromaddr =~ /\@worldfashion.tv/i ) {
+    MoveMessage( $msg, "ETVMedia" );
+  }
+  elsif( $fromaddr =~ /\@ftv.com/i ) {
+    MoveMessage( $msg, "ETVMedia" );
+  }
+  elsif( $fromaddr =~ /\@visjonnorge.com/i ) {
+    MoveMessage( $msg, "VisjonNorge" );
+  }
+  elsif( $fromaddr =~ /\@dmb-edi-net.com/i ) {
+    MoveMessage( $msg, "DMB" );
+  }
+  elsif( $fromaddr =~ /\@deutschemailbox.de/i ) {
+    MoveMessage( $msg, "DMB" );
+  }
+  elsif( $fromaddr =~ /\@pps.de/i ) {
+    MoveMessage( $msg, "PPS" );
+  }
+  elsif( $fromaddr =~ /\@servustv.com/i ) {
+    MoveMessage( $msg, "ServusTV" );
+  }
+}
+
+sub MoveMessage {
+  my( $msg, $foldername ) = @_;
+
+  if( not exists $folders->{$foldername} ) {
+    $folders->{$foldername} = 
+	$rootfolder->openSubFolder( $targetprefix . $foldername, 
+				    access => 'rw' );
+  }
+
+  print("Moved a mail to $foldername\n");
+
+  $msg->moveTo( $folders->{$foldername} );
+}

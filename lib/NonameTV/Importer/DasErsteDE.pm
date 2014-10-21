@@ -24,7 +24,7 @@ use Encode qw/from_to/;
 use Switch;
 use XML::LibXML;
 
-use NonameTV qw/AddCategory norm ParseXml/;
+use NonameTV qw/AddCategory AddCountry norm ParseXml/;
 use NonameTV::DataStore::Helper;
 use NonameTV::Log qw/d p w f/;
 
@@ -345,6 +345,22 @@ sub ImportContent {
       }
     }
 
+    my $country = norm($pgm->findvalue( 'Produktionslaender' ));
+    if($country ne "") {
+        my @conts = split('/', norm($country));
+        my @countries;
+
+        foreach my $c (@conts) {
+            my ( $c2 ) = $self->{datastore}->LookupCountry( "KFZ", $c );
+            push @countries, $c2 if defined $c2;
+        }
+
+        if( scalar( @countries ) > 0 )
+        {
+              $ce->{country} = join "/", @countries;
+        }
+    }
+
     my $actors = $pgm->findnodes ('.//Rolle');
     my @actors_array;
     foreach my $actor($actors->get_nodelist()) {
@@ -357,7 +373,7 @@ sub ImportContent {
       }
     }
     if (@actors_array) {
-      $ce->{actors} = join (", ", @actors_array);
+      $ce->{actors} = join (";", @actors_array);
     }
 
     my $directors = $pgm->findnodes ('.//Regie');
@@ -374,7 +390,7 @@ sub ImportContent {
       @directors_array_2nd = (@directors_array_2nd, @fixup);
     }
     if (@directors_array_2nd) {
-      my $joinedDirectors = join (', ', @directors_array_2nd);
+      my $joinedDirectors = join (';', @directors_array_2nd);
       $joinedDirectors =~ s/\s+/ /g; # fix whitespace in names
       $ce->{directors} = $joinedDirectors;
     }
@@ -386,13 +402,19 @@ sub ImportContent {
       @writers_array = (@writers_array, @fixup);
     }
     if (@writers_array) {
-      $ce->{writers} = join (", ", @writers_array);
+      $ce->{writers} = join (";", @writers_array);
     }
 
     my $production_date = $pgm->findvalue( 'Produktionsjahr' );
     if ($production_date) {
       $ce->{production_date} = $production_date."-01-01";
     }
+
+  $ce->{presenters} = parse_person_list($ce->{presenters}) if defined $ce->{presenters};
+  $ce->{producers} = parse_person_list($ce->{producers}) if defined $ce->{producers};
+  $ce->{actors} = parse_person_list($ce->{actors}) if defined $ce->{actors};
+  $ce->{writers} = parse_person_list($ce->{writers}) if defined $ce->{writers};
+  $ce->{directors} = parse_person_list($ce->{directors}) if defined $ce->{directors};
 
     # TODO how do we handle programmes that are "inside" other programmes?
     my $DazwischenSendung = $pgm->findvalue( 'DazwischenSendung' );
@@ -433,7 +455,7 @@ sub parse_subtitle
     # split ", " and " und "
     my (@presenter) = split (", ", join (", ", split (" und ", $presenters)));
     if ($sce->{presenters}) {
-      $sce->{presenters} = join (", ", $sce->{presenters}, @presenter);
+      $sce->{presenters} = join (";", $sce->{presenters}, @presenter);
     } else {
       $sce->{presenters} = join (@presenter);
     }
@@ -442,7 +464,7 @@ sub parse_subtitle
     # match "mit First Lastname" but not "mit den Wildgaensen"
     my ($presenter) = ($subtitle =~ m|^mit (\S+ \S+)$|);
     if ($sce->{presenters}) {
-      $sce->{presenters} = join (", ", $sce->{presenters}, $presenter);
+      $sce->{presenters} = join (";", $sce->{presenters}, $presenter);
     } else {
       $sce->{presenters} = $presenter;
     }
@@ -451,7 +473,7 @@ sub parse_subtitle
     # match "mit First Lastname" but not "mit den Wildgaensen"
     my ($presenter) = ($subtitle =~ m|^mit (\S+ \S+), (\S+ \S+) und (\S+ \S+)$|);
     if ($sce->{presenters}) {
-      $sce->{presenters} = join (", ", $sce->{presenters}, $presenter);
+      $sce->{presenters} = join (";", $sce->{presenters}, $presenter);
     } else {
       $sce->{presenters} = $presenter;
     }
@@ -495,7 +517,7 @@ sub parse_subtitle
   } elsif ($subtitle =~ m/^(?:Ein |)Film von [A-Z]\S+ [A-Z]\S+$/) {
     my ($producer) = ($subtitle =~ m/^(?:Ein |)Film von (\S+ \S+)$/);
     if ($sce->{producers}) {
-      $sce->{producers} = join (", ", $sce->{producers}, $producer);
+      $sce->{producers} = join (";", $sce->{producers}, $producer);
     } else {
       $sce->{producers} = $producer;
     }
@@ -503,7 +525,7 @@ sub parse_subtitle
   } elsif ($subtitle =~ m/^(?:Ein |)Film von [A-Z]\S+ von [A-Z]\S+$/) {
     my ($producer) = ($subtitle =~ m/^(?:Ein |)Film von (\S+ von \S+)$/);
     if ($sce->{producers}) {
-      $sce->{producers} = join (", ", $sce->{producers}, $producer);
+      $sce->{producers} = join (";", $sce->{producers}, $producer);
     } else {
       $sce->{producers} = $producer;
     }
@@ -511,7 +533,7 @@ sub parse_subtitle
   } elsif ($subtitle =~ m/^(?:Ein |)Film von [A-Z]\S+ [A-Z]\. [A-Z]\S+$/) {
     my ($producer) = ($subtitle =~ m/^(?:Ein |)Film von (\S+ \S+ \S+)$/);
     if ($sce->{producers}) {
-      $sce->{producers} = join (", ", $sce->{producers}, $producer);
+      $sce->{producers} = join (";", $sce->{producers}, $producer);
     } else {
       $sce->{producers} = $producer;
     }
@@ -519,17 +541,17 @@ sub parse_subtitle
   } elsif ($subtitle =~ m/^(?:Ein |)Film von [A-Z]\S+ [A-Z]\S+ und [A-Z]\S+ [A-Z]\S+$/) {
     my ($producer1, $producer2) = ($subtitle =~ m/^(?:Ein |)Film von (\S+ \S+) und (\S+ \S+)$/);
     if ($sce->{producers}) {
-      $sce->{producers} = join (", ", $sce->{producers}, $producer1, $producer2);
+      $sce->{producers} = join (";", $sce->{producers}, $producer1, $producer2);
     } else {
-      $sce->{producers} = join (", ", $producer1, $producer2);
+      $sce->{producers} = join (";", $producer1, $producer2);
     }
     $subtitle = undef;
   } elsif ($subtitle =~ m/^(?:Ein |)Film von [A-Z]\S+ [A-Z]\S+, [A-Z]\S+ [A-Z]\S+$/) {
     my ($producer1, $producer2) = ($subtitle =~ m/^(?:Ein |)Film von (\S+ \S+), (\S+ \S+)$/);
     if ($sce->{producers}) {
-      $sce->{producers} = join (", ", $sce->{producers}, $producer1, $producer2);
+      $sce->{producers} = join (";", $sce->{producers}, $producer1, $producer2);
     } else {
-      $sce->{producers} = join (", ", $producer1, $producer2);
+      $sce->{producers} = join (";", $producer1, $producer2);
     }
     $subtitle = undef;
   } elsif ($subtitle =~ m!^\((?:BR|DFF|HR|MDR|NDR|RB|SR|SWR|RBB|WDR|SWR/HR)\)!) {
@@ -555,7 +577,7 @@ sub parse_subtitle
   } elsif ($subtitle =~ m|^Reporter: \S+ \S+$|) {
     my ($presenter) = ($subtitle =~ m|^Reporter: (\S+ \S+)$|);
     if ($sce->{presenters}) {
-      $sce->{presenters} = join (", ", $sce->{presenters}, $presenter);
+      $sce->{presenters} = join (";", $sce->{presenters}, $presenter);
     } else {
       $sce->{presenters} = $presenter;
     }
@@ -563,7 +585,7 @@ sub parse_subtitle
   } elsif ($subtitle =~ m|^\S+teiliger Film von [A-Z]\S+ [A-Z]\S+$|) {
     my ($producer) = ($subtitle =~ m|^\S+ Film von (\S+ \S+)$|);
     if ($sce->{producers}) {
-      $sce->{producers} = join (", ", $sce->{producers}, $producer);
+      $sce->{producers} = join (";", $sce->{producers}, $producer);
     } else {
       $sce->{producers} = $producer;
     }
@@ -571,9 +593,9 @@ sub parse_subtitle
   } elsif ($subtitle =~ m|^\S+teiliger Film von [A-Z]\S+ [A-Z]\S+ und [A-Z]\S+ [A-Z]\S+$|) {
     my ($producer1, $producer2) = ($subtitle =~ m|^\S+ Film von (\S+ \S+) und (\S+ \S+)$|);
     if ($sce->{producers}) {
-      $sce->{producers} = join (", ", $sce->{producers}, $producer1, $producer2);
+      $sce->{producers} = join (";", $sce->{producers}, $producer1, $producer2);
     } else {
-      $sce->{producers} = join (", ", $producer1, $producer2);
+      $sce->{producers} = join (";", $producer1, $producer2);
     }
     $subtitle = undef;
   } elsif (($subtitle =~ m|^mit den Wildgänsen$|) && ($sce->{title} =~ m|^Die wunderbare Reise des kleinen Nils Holgersson$|)) {
@@ -586,7 +608,7 @@ sub parse_subtitle
     my ( $type, $categ ) = $self->{datastore}->LookupCat( "DasErste_type", $genre);
     AddCategory( $sce, $type, $categ );
     if ($sce->{presenters}) {
-      $sce->{presenters} = join (", ", $sce->{presenters}, $presenter);
+      $sce->{presenters} = join (";", $sce->{presenters}, $presenter);
     } else {
       $sce->{presenters} = $presenter;
     }
@@ -642,6 +664,17 @@ sub parse_subtitle
   }
 
   return $subtitle;
+}
+
+sub parse_person_list
+{
+  my( $str ) = @_;
+
+  return undef if not defined $str;
+
+  my @persons = split( /\s*,\s*/, $str );
+
+  return join( ";", grep( /\S/, @persons ) );
 }
 
 1;

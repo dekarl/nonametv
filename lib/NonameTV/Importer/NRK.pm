@@ -12,6 +12,7 @@ use warnings;
 
 use DateTime;
 use XML::LibXML;
+use Data::Dumper;
 
 use NonameTV qw/MyGet norm Html2Xml/;
 use NonameTV::DataStore::Helper;
@@ -29,6 +30,8 @@ sub new {
     
     
     defined( $self->{UrlRoot} ) or die "You must specify UrlRoot";
+
+    $self->{datastore}->{augment} = 1;
     
     my $dsh = NonameTV::DataStore::Helper->new( $self->{datastore} );
     $self->{datastorehelper} = $dsh;
@@ -61,7 +64,7 @@ sub ImportContent
     
     # Find all "sending" entries
     my $ns = $doc->find( "//SENDING" );
-    
+
     # Start date
     
     $dsh->StartDate( $date, "00:00" );
@@ -71,42 +74,63 @@ sub ImportContent
     
         my $start = $sc->findvalue( './ANNTID' );
         $start =~ s/\./:/;
-               
-        #my $stop = $sc->findvalue( './SLUTTID' );
-        #$stop =~ s/\./:/;
-        
+
         my $title = $sc->findvalue( './SERIETITTEL' );
         my $subtitle = $sc->findvalue( './SENDETITTEL' );
         if ($title eq "") {
             $title = $subtitle;
         }
-        #my $bigtitle = "T$title - S$subtitle";
-        #my $bigtitle = "$title: $subtitle" unless ($title eq $subtitle);
-        #$bigtitle =~ s/^:.//;
+
         if ($title eq $subtitle) {
             $subtitle = "";
         } else {
             $title = "$title: $subtitle";
             
         }
-        #if ($title eq "") {
-        #    $title = $subtitle;
-        #    $subtitle = "";
-        #}
+        
+        # Film
+        if ($title eq "Film" || $title eq "Filmsommer" || $title eq "Dokusommer" || $title eq "Nattkino") {
+            $title = $subtitle;
+            $subtitle = "";
+        }
+
+        $title =~ s/^Detektimen\://i;
         
         my $desc = $sc->findvalue( './RUBRIKKTEKST' );
         my( $episode, $ep, $eps, $seas, $dummy );
-        # Säsong 2
-  			( $seas ) = ($desc =~ /Sesong\s+(\d+)./ );
 
-  			
-  			# Avsnitt 2
-  			( $ep, $eps ) = ($desc =~ /\((\d+)\:(\d+)\)/ );
+        # Avsnitt 2:6
+  		( $ep, $eps ) = ($desc =~ /\((\d+)\:(\d+)\)/ );
+  		$desc =~ s/\((\d+)\:(\d+)\)//;
+  		$desc = norm($desc);
         
         # Avsnitt 2
-  			( $ep ) = ($desc =~ /\s+\((\d+)\)/ ) if not $ep;
-        # my $text = $sc->findvalue( './TEKSTEKODE' );
+  		( $ep ) = ($desc =~ /\s+\((\d+)\)/ ) if not $ep;
+  		$desc =~ s/\((\d+)\)$//;
+  		$desc = norm($desc);
         
+        # Sï¿½song 2
+  		( $seas ) = ($desc =~ /Sesong\s*(\d+)/ );
+		$desc =~ s/Sesong (\d+)\.//;
+		$desc = norm($desc);
+
+		# Age restrict
+		$desc =~ s/\((\d+) .r\)//;
+        $desc = norm($desc);
+        
+        my ( $subtitles ) = ($desc =~ /\((.*)\)$/ );
+        if($subtitles) {
+        	my ( $realtitle, $realsubtitle ) = ($subtitles =~ /(.*)\:(.*)/ );
+        	if(defined($realtitle)) {
+        		#$title = $realtitle;
+        		$subtitles = $realsubtitle;
+        	}
+        	
+        }
+        $desc =~ s/\((.*)\)$//;
+        $desc = norm($desc);
+        
+        #$subtitle = ($desc =~ /\((.*)\)$/ );
         
     # Episode info in xmltv-format
       if( (defined $ep) and (defined $seas) and (defined $eps) )
@@ -132,64 +156,96 @@ sub ImportContent
             #end_time   => $stop,
             description => norm($desc),
             title       => norm($title),
-            #subtitle    => $subtitle,
-            
-        
         };
         
-        $ce->{episode} = $episode if $episode;
+        if(defined($subtitles) and ($subtitles ne "")) {
+        	$ce->{original_title} = norm($subtitles);
+        }
         
-        # Producers
-        #if( my( $directors ) = ($desc =~ /^Produsert\s+av\s*(.*)/) )
-    		#{
-      	#	$ce->{directors} = parse_person_list( $directors );
-    		#}
+        $ce->{episode} = $episode if $episode;
+
+        # Directors
+        if( my( $directors ) = ($ce->{description} =~ /Regi\:\s*(.*)$/) )
+    	{
+      		$ce->{directors}   = parse_person_list( $directors );
+      		$ce->{description} =~ s/Regi\:(.*)$//;
+      		$ce->{description} = norm($ce->{description});
+
+
+      		$ce->{program_type} = "movie";
+    	}
         
         # Get actors
-        #if( my( $actors ) = ($desc =~ /^Med\s*(.*)/ ) )
-    		#{
-      	#	$ce->{actors} = parse_person_list( $actors );
-   			#}
+        if( my( $actors ) = ($ce->{description} =~ /Med\:\s*(.*)$/ ) )
+    	{
+      		$ce->{actors}      = parse_person_list( $actors );
+      		$ce->{description} =~ s/Med\:(.*)$//;
+      		$ce->{description} = norm($ce->{description});
+   		}
+   		
+   		if( ($desc =~ /fr. (\d\d\d\d)\b/i) or
+		($desc =~ /fra (\d\d\d\d)\.*$/i) )
+    	{
+      		$ce->{production_date} = "$1-01-01";
+    	}
+    	
+    	if ($sc->findvalue( './SERIETITTEL' ) eq "Film" || $sc->findvalue( './SERIETITTEL' ) eq "Filmsommer") {
+    		$ce->{program_type} = "movie";
+    		$ce->{subtitle} = undef;
+    	}
+
+    	$ce->{program_type} = "series" if $episode;
+    	
+    	# Title cleanup
+    	$ce->{title} =~ s/Nattkino://g;
+    	$ce->{title} =~ s/Film://g;
+    	$ce->{title} =~ s/Filmsommer://g;
+    	$ce->{title} =~ s/Dokusommer://g;
+    	$ce->{title} = norm($ce->{title});
         
         $dsh->AddProgramme( $ce );
-    
-    
+
+        progress( "NRK: $chd->{xmltvid}: $start - $ce->{title}" );
     }
     
     return 1;
 }
 
-sub FetchDataFromSite
-{
+sub Object2Url {
+  my $self = shift;
+  my( $batch_id, $data ) = @_;
 
-    my $self = shift;
-    my( $batch_id, $data ) = @_;
-    
-    my( $date ) = ($batch_id =~ /_(.*)/);
-    
-    my ($year, $month, $day) = split(/-/, $date);
+  my( $date ) = ($batch_id =~ /_(.*)/);
 
-    my $u = URI->new($self->{UrlRoot});
-    $u->query_form( {
-    		d2_proxy_skip_encoding_all => 'true',
-    		d2_proxy_komponent => '/!potkomp.d2d_pressetjeneste.fkt_pressesoket_flex',
-        p_fom_dag => $day,
-        p_tom_dag => $day,
-        p_fom_mnd => $month,
-        p_tom_mnd => $month,
-        p_fom_ar  => $year,
-        p_tom_ar  => $year,
-        p_format  => "XML",
-        p_type    => "prog",
-        p_knapp   => "Last ned"
-    });
-    my $channeluri = $u->as_string."&".$data->{grabber_info};
-    # print "DEBUG: $channeluri\n";
-    my ( $content, $code ) = MyGet ($channeluri );
-    
-    return( $content, $code );
+  my ($year, $month, $day) = split(/-/, $date);
+
+  my $u = URI->new($self->{UrlRoot});
+      $u->query_form( {
+      		d2_proxy_skip_encoding_all => 'true',
+      		d2_proxy_komponent => '/!potkomp.d2d_pressetjeneste.fkt_pressesoket_flex',
+          p_fom_dag => $day,
+          p_tom_dag => $day,
+          p_fom_mnd => $month,
+          p_tom_mnd => $month,
+          p_fom_ar  => $year,
+          p_tom_ar  => $year,
+          p_format  => "XML",
+          p_type    => "prog",
+          p_knapp   => "Last ned"
+      });
+
+  my $url = $u->as_string."&".$data->{grabber_info};
+
+  return( $url, undef );
 }
 
+sub ContentExtension {
+  return 'xml';
+}
+
+sub FilteredExtension {
+  return 'xml';
+}
 
 sub createDate
 {
@@ -210,6 +266,7 @@ sub parse_person_list
   
   # Remove all variants of m.fl.
   $str =~ s/\s*m[\. ]*fl\.*\b//;
+  $str =~ s/\s*med\s+fler\.*\b//;
   
   # Remove trailing '.'
   $str =~ s/\.$//;
@@ -224,9 +281,10 @@ sub parse_person_list
     # character name might be missing a trailing ).
     s/\s*\(.*$//;
     s/.*\s+-\s+//;
+    s/\.//;
   }
 
-  return join( ", ", grep( /\S/, @persons ) );
+  return join( ";", grep( /\S/, @persons ) );
 }
 
 1;

@@ -9,6 +9,7 @@ use IO::File;
 use DateTime;
 use File::Copy;
 use JSON::XS;
+use Data::Dumper;
 
 use NonameTV::Exporter;
 use NonameTV::Language qw/LoadLanguage/;
@@ -40,6 +41,9 @@ Options:
     Recreate all output files, not only the ones where data has
     changed.
 
+  --channel-group <groupname>
+    Export data only for the channel group specified.
+
 =cut 
 
 sub new {
@@ -57,23 +61,19 @@ sub new {
     $self->{LastRequiredDate} = 
       DateTime->today->add( days => $self->{MinDays}-1 )->ymd("-");
 
-    $self->{OptionSpec} = [ qw/export-channels remove-old force-export 
+    $self->{OptionSpec} = [ qw/export-channels remove-old force-export
+                channel-group=s
 			    verbose+ quiet+ help/ ];
 
     $self->{OptionDefaults} = { 
       'export-channels' => 0,
       'remove-old' => 0,
       'force-export' => 0,
+      'channel-group' => "",
       'help' => 0,
       'verbose' => 0,
       'quiet' => 0,
     };
-
-    my $ds = $self->{datastore};
-
-    # Load language strings
-    $self->{lngstr} = LoadLanguage( $self->{Language}, 
-                                   "exporter-xmltv", $ds );
 
     return $self;
 }
@@ -81,6 +81,7 @@ sub new {
 sub Export
 {
   my( $self, $p ) = @_;
+  my $channelgroup = $p->{'channel-group'};
 
   if( $p->{'help'} )
   {
@@ -111,7 +112,7 @@ EOH
 
   if( $p->{'export-channels'} )
   {
-    $self->ExportChannelList();
+    $self->ExportChannelList( $channelgroup );
     return;
   }
 
@@ -420,12 +421,17 @@ sub CreateWriter
   my $path = $self->{Root};
   my $filename =  $xmltvid . "_" . $date . ".js";
 
+  my $ds = $self->{datastore};
+
   $self->{writer_filename} = $filename;
   $self->{writer_entries} = 0;
   # Make sure that writer_entries is always true if we don't require data
   # for this date.
   $self->{writer_entries} = "0 but true" 
     if( ($date gt $self->{LastRequiredDate}) or $chd->{empty_ok} );
+
+  $self->{lngstr} = LoadLanguage( $chd->{sched_lang},
+                                         "exporter-xmltv", $ds );
 
   my $data = [];
 
@@ -489,6 +495,7 @@ sub WriteEntry
 {
   my $self = shift;
   my( $data, $entry, $chd ) = @_;
+  my ($system, $inetref);
 
   $self->{writer_entries}++;
 
@@ -535,9 +542,33 @@ sub WriteEntry
 	  if defined $ep_max;
       $ep_text .= " " . $self->{lngstr}->{episode_season} . " $season" 
 	  if( $season );
-      
-      $d->{'episodeNum'} = { xmltv_ns =>  norm($entry->{episode}),
-			     onscreen => $ep_text };
+
+	  # MythTV
+	  if( $entry->{url}) {
+        if( $entry->{url} =~ m|^http://thetvdb.com/| ){
+          ( $inetref )=( $entry->{url} =~ m|seriesid=(\d+)| );
+          $system = 'thetvdb.com';
+          $inetref = 'series/' . $inetref;
+        }elsif( $entry->{url} =~ m|^http://www.themoviedb.org/| ){
+          ( $inetref )=( $entry->{url} =~ m|movie/(\d+)| );
+          $system = 'themoviedb.org';
+          $inetref = 'movie/' . $inetref;
+        }elsif( $entry->{url} =~ m|^http://www.tvrage.com//| ){
+          ( $inetref )=( $entry->{url} =~ m|episodes/(\d+)| );
+          $system = 'tvrage.com';
+          $inetref = 'episode/' . $inetref;
+        }
+	  }
+
+      # Only add if it exists
+      if( $system ){
+        $d->{'episodeNum'} = { xmltv_ns =>  norm($entry->{episode}),
+        			     onscreen => $ep_text, $system => $inetref };
+      } else {
+        $d->{'episodeNum'} = { xmltv_ns =>  norm($entry->{episode}),
+      			     onscreen => $ep_text };
+      }
+
     }
     else {
       # This episode is only a segment and not a real episode.
@@ -557,11 +588,17 @@ sub WriteEntry
 
   if( defined( $entry->{category} ) and ($entry->{category} =~ /\S/) )
   {
-    push @{$d->{category}->{en}}, $entry->{category};
+    my @genres = split ("/", $entry->{category});
+    foreach my $genre (@genres) {
+        push @{$d->{category}->{en}}, $genre;
+    }
   }
   elsif( defined( $chd->{def_cat} ) and ($chd->{def_cat} =~ /\S/) )
   {
-    push @{$d->{category}->{en}}, $chd->{def_cat};
+    my @genres2 = split ("/", $chd->{def_cat});
+    foreach my $genre2 (@genres2) {
+        push @{$d->{category}->{en}}, $genre2;
+    }
   }
 
   if( defined( $entry->{production_date} ) and 
@@ -577,48 +614,61 @@ sub WriteEntry
 
   if( $entry->{directors} =~ /\S/ )
   {
-    $d->{credits}->{director} = [split( ", ", $entry->{directors})];
+    $d->{credits}->{director} = ParseCredits($entry->{directors});
   }
 
   if( $entry->{actors} =~ /\S/ )
   {
-    $d->{credits}->{actor} = [split( ", ", $entry->{actors})];
+    $d->{credits}->{actor} = ParseCredits($entry->{actors});
   }
 
   if( $entry->{writers} =~ /\S/ )
   {
-    $d->{credits}->{writer} = [split( ", ", $entry->{writers})];
+    $d->{credits}->{writer} = ParseCredits($entry->{writers});
   }
 
   if( $entry->{adapters} =~ /\S/ )
   {
-    $d->{credits}->{adapter} = [split( ", ", $entry->{adapters})];
+    $d->{credits}->{adapter} = ParseCredits($entry->{adapters});
   }
 
   if( $entry->{producers} =~ /\S/ )
   {
-    $d->{credits}->{producer} = [split( ", ", $entry->{producers})];
+    $d->{credits}->{producer} = ParseCredits($entry->{producers});
   }
 
   if( $entry->{presenters} =~ /\S/ )
   {
-    $d->{credits}->{presenter} = [split( ", ", $entry->{presenters})];
+    $d->{credits}->{presenter} = ParseCredits($entry->{presenters});
   }
 
   if( $entry->{commentators} =~ /\S/ )
   {
-    $d->{credits}->{commentator} = [split( ", ", $entry->{commentators})];
+    $d->{credits}->{commentator} = ParseCredits($entry->{commentators});
   }
 
   if( $entry->{guests} =~ /\S/ )
   {
-    $d->{credits}->{guest} = [split( ", ", $entry->{guests})];
+    $d->{credits}->{guest} = ParseCredits($entry->{guests});
   }
 
   if( $entry->{url} )
   {
     $d->{url} = [ $entry->{url} ];
+
+    # MythTV in case of no episodeNum
+    if( $entry->{url} =~ m|^http://www.themoviedb.org/| ){
+        ( $inetref )=( $entry->{url} =~ m|movie/(\d+)| );
+        $system = 'themoviedb.org';
+        $inetref = 'movie/' . $inetref;
+    }
+    # Only add if it exists
+    if( $system and !defined $d->{'episodeNum'} and $entry->{url} =~ m|^http://www.themoviedb.org/| ){
+        $d->{'episodeNum'} = { $system => $inetref };
+    }
   }
+
+
 
   if( $entry->{star_rating} )
   {
@@ -630,7 +680,44 @@ sub WriteEntry
     $d->{rating}->{mpaa} = $entry->{rating};
   }
 
+  if( $entry->{country} and $entry->{country} =~ /\S/ )
+  {
+    #$d->{country} = $entry->{country};
+    my @countries  = split ("/", $entry->{country});
+    foreach my $country (@countries) {
+        push @{$d->{country}}, $country;
+    }
+  }
+
+  if( $entry->{previously_shown} )
+  {
+    $d->{previously_shown} = $entry->{previously_shown};
+  }
+
   push @{$data}, $d;
+}
+
+sub ParseCredits
+{
+    my( $data ) = @_;
+
+    my @credits = split( ";", $data);
+    my $return = [];
+
+    foreach my $act (@credits)
+    {
+        my ( $role ) = ($act =~ /\((.*)\)$/);
+        $act =~ s/\((.*?)\)$//;
+        my $name = norm($act);
+
+        if(defined $role and $role ne "") {
+            push @{$return}, { role => norm($role), name => norm($name) };
+        } else {
+            push @{$return}, { name => norm($name) };
+        }
+    }
+
+    return $return;
 }
 
 #
@@ -638,15 +725,19 @@ sub WriteEntry
 #
 sub ExportChannelList
 {
-  my( $self ) = @_;
+  my( $self ) = shift;
+  my( $channelgroup ) = @_;
   my $ds = $self->{datastore};
 
   my $channels = {};
 
-  my( $res, $sth ) = $ds->sa->Sql( "
-      SELECT * from channels 
-      WHERE export=1
-      ORDER BY xmltvid" );
+  my $query = "SELECT * from channels WHERE export=1 ";
+  if( $channelgroup )
+  {
+    $query .= "AND FIND_IN_SET (\'$channelgroup\', chgroup) ";
+  }
+  $query .= "ORDER BY display_name";
+  my( $res, $sth ) = $ds->sa->Sql( $query );
 
   while( my $data = $sth->fetchrow_hashref() )
   {
@@ -663,14 +754,24 @@ sub ExportChannelList
     }
   }
 
-  my $fh = new IO::File("> $self->{Root}channels.js");
+  my $outfile;
+  if( $channelgroup )
+  {
+    $outfile = "$self->{Root}channels-$channelgroup.js";
+  }
+  else
+  {
+    $outfile = "$self->{Root}channels.js";
+  }
+
+  my $fh = new IO::File("> $outfile");
   my $js = JSON::XS->new;
   $js->ascii( 1 );
   $js->pretty( 1 );
   $fh->print( $js->encode( { jsontv => { channels => $channels } } ) );
   $fh->close();
   
-  system("gzip -f -n $self->{Root}channels.js");
+  system("gzip -f -n $outfile");
 }
 
 #

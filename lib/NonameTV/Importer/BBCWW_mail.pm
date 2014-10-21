@@ -20,6 +20,15 @@ use POSIX;
 use DateTime;
 use XML::LibXML;
 use Spreadsheet::ParseExcel;
+use Data::Dumper;
+use Spreadsheet::Read;
+
+use Spreadsheet::XLSX;
+use Spreadsheet::XLSX::Utility2007 qw(ExcelFmt ExcelLocaltime LocaltimeExcel);
+use Spreadsheet::Read;
+
+use Text::Iconv;
+my $converter = Text::Iconv -> new ("utf-8", "windows-1251");
 
 use NonameTV qw/norm MonthNumber/;
 use NonameTV::DataStore::Helper;
@@ -74,12 +83,20 @@ sub ImportXLS
   my %columns = ();
   my $date;
   my $currdate = "x";
+  my $oBook;
 
-  my $oBook = Spreadsheet::ParseExcel::Workbook->Parse( $file );
+  if ( $file =~ /\.xlsx$/i ){ progress( "using .xlsx" );  $oBook = Spreadsheet::XLSX -> new ($file, $converter); }
+  else { $oBook = Spreadsheet::ParseExcel::Workbook->Parse( $file );  }
 
   # main loop
   #for(my $iSheet=0; $iSheet < $oBook->{SheetCount} ; $iSheet++) {
   foreach my $oWkS (@{$oBook->{Worksheet}}) {
+
+	# main worksheet is "Schedule" if thats not the right one, jump to "Hungary"
+	if( $oWkS->{Name} !~ /Schedule/ and $oWkS->{Name} !~ /Hungary/ and $oWkS->{Name} !~ /English/ ){
+          progress( "BBCWW: $chd->{xmltvid}: Skipping worksheet: $oWkS->{Name}" );
+          next;
+    }
 
     #my $oWkS = $oBook->{Worksheet}[$iSheet];
     progress( "BBCWW: $chd->{xmltvid}: Processing worksheet: $oWkS->{Name}" );
@@ -99,26 +116,62 @@ sub ImportXLS
             $columns{$oWkS->{Cells}[$iR][$iC]->Value} = $iC;
 
 			$columns{'Title'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /English Title/ );
-			$columns{'Title'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Programme Title/ );
+			$columns{'Title'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /^Programme Title/ );
+			$columns{'Title'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /^Programme \(English\)$/ );
 
-          $columns{'Episode Title'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /English Episode Title/ );
-          $columns{'Ser No'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Series No./ );
-          $columns{'Ep No'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Episode No./ );
+            $columns{'ORGTitle'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /English Title/ );
+			$columns{'ORGTitle'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /^Programme \(English\)$/ );
+
+            $columns{'Episode Title'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /English Episode Title/ and not defined $columns{'Episode Title'} );
+            $columns{'Episode Title'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Episode Name \(English\)/ and not defined $columns{'Episode Title'} );
+            $columns{'Episode Title'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Episode Title/ and not defined $columns{'Episode Title'} );
           
-          $columns{'Synopsis'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Synopsis./ );
+            $columns{'Ser No'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Series No./ );
+            $columns{'Ser No'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Series Number/ );
+            $columns{'Ep No'}  = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Episode No./ );
+            $columns{'Ep No'}  = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Episode Number/ );
+            $columns{'Eps'}    = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Episodes in/ );
+
+            $columns{'Date'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Date/ and $oWkS->{Cells}[$iR][$iC]->Value !~ /EET/ );
+            $columns{'Time'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Time/ and $oWkS->{Cells}[$iR][$iC]->Value !~ /EET/ ); # Dont set the time to EET
+            $columns{'Time'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Time \(CET\/CEST\)/ );
+
+            $columns{'Year'}      = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Production Year/ );
+            $columns{'Director'}  = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Director/ );
+            $columns{'Cast'}      = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Cast/ );
+            $columns{'Presenter'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Presenter/ );
+
+            $columns{'Synopsis'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /English Synopsis/ and not defined $columns{'Synopsis'} );
+            $columns{'Synopsis'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Synopsis \(English\)/ and not defined $columns{'Synopsis'} );
+            $columns{'Synopsis'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /^Synopsis\.$/ and not defined $columns{'Synopsis'} );
+
+            # Swedish
+			if($chd->{sched_lang} eq "sv") {
+			    $columns{'Title'}         = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Programme \(Swedish\)/ );
+			    $columns{'Synopsis'}      = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Synopsis \(Swedish\)/ );
+			    $columns{'Episode Title'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Episode Name \(Swedish\)/ );
+			}elsif($chd->{sched_lang} eq "no") {
+                $columns{'Title'}         = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Programme \(Norwegian\)/ );
+			    $columns{'Synopsis'}      = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Synopsis \(Norwegian\)/ );
+			    $columns{'Episode Title'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Episode Name \(Norwegian\)/ );
+			}elsif($chd->{sched_lang} eq "da") {
+                $columns{'Title'}         = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Programme \(Danish\)/ );
+			    $columns{'Synopsis'}      = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Synopsis \(Danish\)/ );
+			    $columns{'Episode Title'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Episode Name \(Danish\)/ );
+			}elsif($chd->{sched_lang} eq "fi") {
+                $columns{'Title'}         = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Programme \(Finnish\)/ );
+			    $columns{'Synopsis'}      = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Synopsis \(Finnish\)/ );
+			    $columns{'Episode Title'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Episode Name \(Finnish\)/ );
+			}
 
             $foundcolumns = 1 if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Date/ );
           }
         }
-#foreach my $cl (%columns) {
-#	print "$cl\n";
-#}
+
         %columns = () if( $foundcolumns eq 0 );
 
         next;
       }
-
-
 
       # date - column 0 ('Date')
       my $oWkC = $oWkS->{Cells}[$iR][$columns{'Date'}];
@@ -143,9 +196,10 @@ sub ImportXLS
       }
 
 	  # time
-      $oWkC = $oWkS->{Cells}[$iR][$columns{'Time'}];
+	  $oWkC = $oWkS->{Cells}[$iR][$columns{'Time'}];
       next if( ! $oWkC );
       my $time = $oWkC->Value if( $oWkC->Value );
+      $time =~ s/'//g;
 
       # title
       $oWkC = $oWkS->{Cells}[$iR][$columns{'Title'}];
@@ -158,7 +212,7 @@ sub ImportXLS
 
 	  # extra info
 	  my $desc = $oWkS->{Cells}[$iR][$columns{'Synopsis'}]->Value if $oWkS->{Cells}[$iR][$columns{'Synopsis'}];
-	  my $subtitle = $oWkS->{Cells}[$iR][$columns{'Episode Title'}]->Value if $oWkS->{Cells}[$iR][$columns{'Episode Title'}];
+	  my $year = $oWkS->{Cells}[$iR][$columns{'Year'}]->Value if defined($columns{'Year'}) and $oWkS->{Cells}[$iR][$columns{'Year'}];
 
       progress("BBCWW: $chd->{xmltvid}: $time - $title");
 
@@ -169,8 +223,12 @@ sub ImportXLS
         description => norm( $desc ),
       };
 
-	  # Subtitle
-	  $ce->{subtitle} = norm( $subtitle ) if $subtitle;
+	  # Extra
+	  $ce->{subtitle}        = norm($oWkS->{Cells}[$iR][$columns{'Episode Title'}]->Value) if $oWkS->{Cells}[$iR][$columns{'Episode Title'}];
+	  $ce->{actors}          = parse_person_list(norm($oWkS->{Cells}[$iR][$columns{'Cast'}]->Value))          if defined($columns{'Cast'}) and $oWkS->{Cells}[$iR][$columns{'Cast'}];
+	  $ce->{directors}       = parse_person_list(norm($oWkS->{Cells}[$iR][$columns{'Director'}]->Value))      if defined($columns{'Director'}) and $oWkS->{Cells}[$iR][$columns{'Director'}];
+	  $ce->{presenters}      = parse_person_list(norm($oWkS->{Cells}[$iR][$columns{'Presenter'}]->Value))     if defined($columns{'Presenter'}) and $oWkS->{Cells}[$iR][$columns{'Presenter'}];
+      $ce->{production_date} = $year."-01-01" if defined($year) and $year ne "" and $year ne "0000";
 
       if( $epino ){
         if( $seano ){
@@ -179,6 +237,14 @@ sub ImportXLS
           $ce->{episode} = sprintf( ". %d .", $epino-1 );
         }
       }
+
+      # org title
+      if(defined $columns{'ORGTitle'}) {
+        $oWkC = $oWkS->{Cells}[$iR][$columns{'ORGTitle'}];
+        my $title_org = $oWkC->Value if( $oWkC->Value );
+        $ce->{original_title} = norm($title_org) if defined($title_org) and $ce->{title} ne norm($title_org) and norm($title_org) ne "";
+      }
+
 
       $dsh->AddProgramme( $ce );
 
@@ -207,6 +273,20 @@ sub ParseDate {
   }
 
   return sprintf( '%d-%02d-%02d', $year, $month, $day );
+}
+
+sub parse_person_list
+{
+  my( $str ) = @_;
+
+  my @persons = split( /\s*,\s*/, $str );
+  foreach (@persons)
+  {
+    # The character name is sometimes given . Remove it.
+    s/^.*\s+-\s+//;
+  }
+
+  return join( ";", grep( /\S/, @persons ) );
 }
 
 1;

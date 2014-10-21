@@ -1,3 +1,1 @@
-RADIO,Radiokanaler,100,display_name,0
-TEST,"Test Channels for Development",255,display_name,1
-TV,TV-Kanaler,1,display_name,0
+TV,TV,0,,0

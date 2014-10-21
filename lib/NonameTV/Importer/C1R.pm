@@ -18,6 +18,7 @@ use POSIX;
 use DateTime;
 use RTF::Tokenizer;
 use Locale::Recode;
+use Data::Dumper;
 
 use NonameTV qw/MyGet Wordfile2Xml Htmlfile2Xml norm AddCategory MonthNumber/;
 use NonameTV::DataStore::Helper;
@@ -36,6 +37,8 @@ sub new {
 
   my $dsh = NonameTV::DataStore::Helper->new( $self->{datastore} );
   $self->{datastorehelper} = $dsh;
+
+  $self->{datastore}->{augment} = 1;
 
   return $self;
 }
@@ -135,7 +138,7 @@ sub ImportContentFile
 
           my $batch_id = "${xmltvid}_" . $date->ymd();
           $dsh->StartBatch( $batch_id, $channel_id );
-          $dsh->StartDate( $date->ymd("-") , "08:00" ); 
+          $dsh->StartDate( $date->ymd("-") , "04:00" );
           $currdate = $date;
 
           progress("C1R: $chd->{xmltvid}: Date is " . $date->ymd("-") );
@@ -145,7 +148,7 @@ sub ImportContentFile
       }
       elsif( isShow( $text ) ) { # the token with the time in format '19.30 Vremja'
 
-	my( $starttime , $title ) = ParseShow( $text );
+	    my( $starttime , $title, $desc ) = ParseShow( $text );
 
         progress("C1R: $chd->{xmltvid}: $starttime - $title");
 
@@ -154,6 +157,16 @@ sub ImportContentFile
           start_time => $starttime,
           title => norm($title),
         };
+
+        $ce->{description} = norm($desc) if defined $desc and norm($desc) ne "";
+
+        if(defined($ce->{description}) and $ce->{description} =~ / v (.*?)$/i) {
+            my $genre = $1;
+            $ce->{description} =~ s/ v (.*?)$//i;
+
+            my($program_type, $category ) = $ds->LookupCat( "C1R", norm($genre) );
+            AddCategory( $ce, $program_type, $category );
+        }
 
         $dsh->AddProgramme( $ce );
 
@@ -173,6 +186,8 @@ sub ImportContentFile
 sub isDate {
   my ( $text ) = @_;
 
+  #print Dumper($text);
+
   # format 'Wednesday, August 13'
   # format 'Monday, September, 1'
   if( $text =~ /^\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday),\s*\S+,*\s*\d+$/i ){
@@ -180,7 +195,7 @@ sub isDate {
   }
 
   # format 'Ponedel'nik, 27 aprelja'
-  if( $text =~ /^\s*(Ponedel'nik|Vtornik|Sreda|Chetverg|Pjatnica|Subbota|Voskresen'e),\s+\d+\s+(aprelja)$/i ){
+  if( $text =~ /^\s*(Ponedel'nik|Vtornik|Sreda|Chetverg|Pjatnica|Subbota|Voskresen'e),\s+\d+\s+(.*)$/i ){
     return 1;
   }
 
@@ -201,6 +216,8 @@ sub isShow {
 sub ParseDate {
   my( $text ) = @_;
 
+#  print Dumper($text);
+
   my( $dayname, $monthname, $day );
   my $month;
 
@@ -211,7 +228,7 @@ sub ParseDate {
   }
 
   # format 'Ponedel'nik, 27 aprelja'
-  if( $text =~ /^\s*(Ponedel'nik|Vtornik|Sreda|Chetverg|Pjatnica|Subbota|Voskresen'e),\s+\d+\s+(aprelja)$/i ){
+  if( $text =~ /^\s*(Ponedel'nik|Vtornik|Sreda|Chetverg|Pjatnica|Subbota|Voskresen'e),\s+\d+\s+\s*/i ){
     ( $dayname, $day, $monthname ) = ( $text =~ /^\s*(\S+),\s+(\d+)\s+(\S+)/ );
     $month = MonthNumber( $monthname , "ru" );
   }
@@ -240,7 +257,28 @@ sub ParseShow {
 
   my( $hour, $min, $title ) = ( $text =~ /^(\d+)\.(\d+)\s+(.*)$/ );
 
-  return( $hour . ":" . $min , $title );
+  my $desc = undef;
+
+  #$title =~ s/"//gi;
+  my ($realtitle) = ($title =~ /"(.*?)"/);
+  if(defined($realtitle)) {
+    # Remove the title and clean it up
+    # then add it to description (Premiere, actors etc)
+    $desc  = $title;
+    $desc  =~ s/"(.*?)"//;
+    $desc  = norm($desc);
+    $desc  =~ s/^\.//;
+    $desc  =~ s/\((.*?)\)//g;
+    $desc  = norm($desc);
+
+    # New title
+    $title = $realtitle;
+  }
+
+  $title =~ s/\.\.\.//i;
+  $title =~ s/\(.*\)//i;
+
+  return( sprintf("%02d:%02d", $hour, $min) , $title, $desc );
 }
 
 1;

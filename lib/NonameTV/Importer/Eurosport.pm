@@ -50,7 +50,6 @@ sub Object2Url {
   my $dir = $chd->{grabber_info};
   my $url = $self->{FtpRoot} . $dir . '/' . $self->{Filename};
 
-print "$url\n";
   return( $url, undef );
 }
 

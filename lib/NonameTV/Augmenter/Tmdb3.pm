@@ -8,7 +8,7 @@ use Encode;
 use utf8;
 use TMDB;
 
-use NonameTV qw/AddCategory norm ParseXml/;
+use NonameTV qw/AddCategory AddCountry norm ParseXml/;
 use NonameTV::Augmenter::Base;
 use NonameTV::Config qw/ReadConfig/;
 use NonameTV::Log qw/w d/;
@@ -40,20 +40,17 @@ sub new {
     # need config for main content cache path
     my $conf = ReadConfig( );
 
-#    my $cachefile = $conf->{ContentCachePath} . '/' . $self->{Type} . '/tvdb.db';
-#    my $bannerdir = $conf->{ContentCachePath} . '/' . $self->{Type} . '/banner';
+    my $cachedir = $conf->{ContentCachePath} . '/' . $self->{Type};
 
     $self->{themoviedb} = TMDB->new(
         apikey => $self->{ApiKey},
         lang   => $self->{Language},
+        cache  => $cachedir,
     );
 
     $self->{search} = $self->{themoviedb}->search(
         include_adult => 'false',  # Include adult results. 'true' or 'false'
     );
-
-    # slow down to avoid rate limiting
-    $self->{Slow} = 1;
 
     return $self;
 }
@@ -77,7 +74,7 @@ sub FillCast( $$$$ ) {
     push( @credits, $name );
   }
   if( @credits ) {
-    $resultref->{$credit} = join( ', ', @credits );
+    $resultref->{$credit} = join( ';', @credits );
   }
 }
 
@@ -93,17 +90,14 @@ sub FillCrew( $$$$$ ) {
     }
   }
   if( @credits ) {
-    $resultref->{$credit} = join( ', ', @credits );
+    $resultref->{$credit} = join( ';', @credits );
   }
 }
 
 
 sub FillHash( $$$ ) {
   my( $self, $resultref, $movieId, $ceref )=@_;
- 
-  if( $self->{Slow} ) {
-    sleep (1);
-  }
+
   my $movie = $self->{themoviedb}->movie( id => $movieId );
 #  print Dumper $movie->info;
 #  print Dumper $movie->alternative_titles;
@@ -126,7 +120,7 @@ sub FillHash( $$$ ) {
   # FIXME shall we use the alternative name if that's what was in the guide???
   # on one hand the augmenters are here to unify various styles on the other
   # hand matching the other guides means less surprise for the users
-  $resultref->{title} = norm( $movie->title );
+  #$resultref->{title} = norm( $movie->title ); # We dont want to set this.
   if( defined( $movie->info ) ){
     my $original_title = $movie->info->{original_title};
     if( defined( $original_title ) ){
@@ -170,11 +164,26 @@ sub FillHash( $$$ ) {
 
   if( exists( $movie->info()->{genres} ) ){
     my @genres = @{ $movie->info()->{genres} };
+    my @cats;
     foreach my $node ( @genres ) {
       my $genre_id = $node->{id};
       my ( $type, $categ ) = $self->{datastore}->LookupCat( "Tmdb_genre", $genre_id );
-      AddCategory( $resultref, $type, $categ );
+      push @cats, $categ if defined $categ;
     }
+    my $cat = join "/", @cats;
+    AddCategory( $resultref, "movie", $cat );
+  }
+
+  if( exists( $movie->info()->{production_countries} ) ){
+    my @countries;
+    my @production_countries = @{ $movie->info()->{production_countries} };
+    foreach my $node2 ( @production_countries ) {
+      my $c_id = $node2->{iso_3166_1};
+      #my ( $country ) = $self->{datastore}->LookupCountry( "Tmdb_country", $c_id );
+      push @countries, $c_id if defined $c_id;
+    }
+    my $country2 = join "/", @countries;
+    AddCountry( $resultref, $country2 );
   }
 
   # TODO themoviedb does not store a year of production only the first screening, that should go to previosly-shown instead
@@ -191,6 +200,10 @@ sub FillHash( $$$ ) {
 #  $self->FillCrew( $resultref, 'presenters', $movie, 'Actors');
   $self->FillCrew( $resultref, 'producers', $movie, 'Producer');
   $self->FillCrew( $resultref, 'writers', $movie, 'Screenplay');
+
+  $resultref->{extra_id} = $movie->info->{imdb_id} if $movie->info->{imdb_id} ne "";
+  $resultref->{extra_id} = $movie->{ id } if $movie->info->{imdb_id} eq "";
+  $resultref->{extra_id_type} = "themoviedb";
 
 #  print STDERR Dumper( $apiresult );
 }
@@ -224,21 +237,62 @@ sub AugmentProgram( $$$ ){
     $searchTerm =~ s|[-#\?\N{U+00BF}\(\)]||g;
     $searchTerm =~ s|[:]| |g;
 
-    if( $self->{Slow} ) {
-      sleep (1);
-    }
     # TODO fix upstream instead of working around here
+
     my @candidates = $self->{search}->movie( $searchTerm );
+    my @mids = ();
     my @keep = ();
 
+    foreach my $c ( @candidates ){
+        if( defined( $c->{id} ) ) {
+            push( @mids, $c->{id} );
+        }
+    }
+
+    #print Dumper(@mids);
+
     my $numResult = @candidates;
+
+    # No results? Try with the original title
+    if(defined $ceref->{original_title} and $ceref->{original_title} ne "" and $ceref->{original_title} ne $ceref->{title}) {
+        my $original_title = $ceref->{original_title};
+        $original_title =~ s|&|%26|g;
+        $original_title =~ s|[-#\?\N{U+00BF}\(\)]||g;
+        $original_title =~ s|[:]| |g;
+
+        my @title_org = $self->{search}->movie( $original_title );
+        my $match = 0;
+
+        foreach my $c2 ( @title_org ){
+            my $match = 0;
+            if( defined( $c2->{id} ) ) {
+                my $mid = $c2->{id};
+
+                # Search
+                foreach my $c3 ( @mids ){
+                    if($c3 eq $mid) {
+                        $match = 1;
+                    }
+                }
+            }
+
+            if(!$match) {
+                push( @candidates, $c2 );
+            }
+        }
+
+
+    }
+
+    $numResult = @candidates;
+
     if( $numResult < 1 ){
       return( undef,  "No matching movie found when searching for: " . $searchTerm );
     }else{
 
       # strip out all candidates without any matching director
       if( ( @candidates >= 1 ) and ( $ceref->{directors} ) ){
-        my @directors = split( /, /, $ceref->{directors} );
+        my @directors = split( /;/, $ceref->{directors} );
         my $match = 0;
 
         # loop over all remaining movies
@@ -248,9 +302,6 @@ sub AugmentProgram( $$$ ){
           if( defined( $candidate->{id} ) ) {
             # we have to fetch the remaining candidates to peek at the directors
             my $movieId = $candidate->{id};
-            if( $self->{Slow} ) {
-              sleep (1);
-            }
             my $movie = $self->{themoviedb}->movie( id => $movieId );
 
             my @names = ( );
@@ -258,6 +309,7 @@ sub AugmentProgram( $$$ ){
               # tv stations sometimes list the movie as being "by the author" instead of the director, so accept both
               if( ( $crew->{'job'} eq 'Director' )||( $crew->{'job'} eq 'Author' )||( $crew->{'job'} eq 'Screenplay' ) ) {
                 my $person = $self->{themoviedb}->person( id => $crew->{id} );
+
                 if( defined( $person ) ){
                   if( defined( $person->aka() ) ){
                     if( defined( $person->aka()->[0] ) ){

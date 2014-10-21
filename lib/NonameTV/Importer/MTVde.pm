@@ -31,6 +31,8 @@ sub new {
   my $self  = $class->SUPER::new( @_ );
   bless ($self, $class);
 
+  $self->{KeepDesc} = 0;
+
   if (!defined $self->{HaveVGMediaLicense}) {
     warn( 'Extended event information (texts, pictures, audio and video sequences) is subject to a license sold by VG Media. Set HaveVGMediaLicense to yes or no.' );
     $self->{HaveVGMediaLicense} = 'no';
@@ -50,10 +52,12 @@ sub Object2Url {
 
   my( $year, $week ) = ( $objectname =~ /(\d+)-(\d+)$/ );
 
-  my $channel = $chd->{grabber_info};
+  #my $channel = $chd->{grabber_info};
+  my( $channel, $country, $country2 ) = split( /:/, $chd->{grabber_info} );
+  
   if( $channel =~ m|^\d+$| ){
     # weeks are numbered 1 to 52/53
-    my $url = sprintf( "http://api.mtvnn.com/v2/airings.struppi?channel_id=%d&program_week_is=%d", $channel, $week );
+    my $url = sprintf( "http://api.mtvnn.com/v2/airings.struppi?channel_id=%d&program_week_is=%d&language_code=%s&country_code=%s", $channel, $week, $country, $country2 );
 
     d( "MTVde: fetching data from $url" );
 
@@ -72,7 +76,8 @@ sub FilterContent {
   my( $cref, $chd ) = @_;
 
   # mixed in windows line breaks
-  $$cref =~ s|||g;
+  $$cref =~ s|
+||g;
 
   $$cref =~ s| xmlns:ns='http://struppi.tv/xsd/'||;
   $$cref =~ s| xmlns:xsd='http://www.w3.org/2001/XMLSchema'||;
@@ -117,20 +122,15 @@ sub ImportContent( $$$ ) {
     $ce->{start_time} = $self->parseTimestamp( $xpc->findvalue( 's:termin/@start' ) );
     $ce->{end_time} = $self->parseTimestamp( $xpc->findvalue( 's:termin/@ende' ) );
 
-    my $title = $xpc->findvalue( 's:titel/s:alias[@titelart="titel"]/@aliastitel' );
-    if( !$title ){
-      $title = $xpc->findvalue( 's:titel/s:alias[@titelart="originaltitel"]/@aliastitel' );
-    }
-    if( !$title ){
-      $title = $xpc->findvalue( 's:titel/@termintitel' );
-    }
-    if( $title ){
-      $ce->{title} = $title;
-    }
+    $ce->{title} = norm($xpc->findvalue( 's:titel/@termintitel' ));
 
-    my $subtitle = $xpc->findvalue( 's:titel/s:alias[@titelart="untertitel"]/@aliastitel' );
+    my $title_org;
+    $title_org = $xpc->findvalue( 's:titel/s:alias[@titelart="originaltitel"]/@aliastitel' );
+    $ce->{original_title} = norm($title_org) if $ce->{title} ne norm($title_org) and norm($title_org) ne "";
+
+    my $subtitle = $xpc->findvalue( 's:titel/s:alias[@titelart="originaluntertitel"]/@aliastitel' );
     if( !$subtitle ){
-      $subtitle = $xpc->findvalue( 's:titel/s:alias[@titelart="originaluntertitel"]/@aliastitel' );
+      $subtitle = $xpc->findvalue( 's:titel/s:alias[@titelart="untertitel"]/@aliastitel' );
     }
     if( $subtitle ){
       my $staffel;
@@ -167,10 +167,32 @@ sub ImportContent( $$$ ) {
 
     my $url = $xpc->findvalue( 's:infos/s:url/@link' );
     if( $url ){
-      $ce->{url} = $url
+      $ce->{url} = $url;
     }
 
+    # Episode
+    my $season = $xpc->findvalue( 's:infos/s:folge/@staffel' );
+    my $episode = $xpc->findvalue( 's:infos/s:folge/@folgennummer' );
+    if($season and $episode and $season ne "99") {
+        $ce->{episode} = sprintf( "%d . %d .", $season-1, $episode-1 );
+    } elsif($episode) {
+        $ce->{episode} = sprintf( " . %d .", $episode-1 );
+    }
+
+    #Descr
+    my $desc = $xpc->findvalue( 's:text[@textart="Kurztext"]' );
+    if( ! $desc) {
+        $desc = $xpc->findvalue( 's:text[@textart="Beschreibung"]' );
+    }
+    if( ! $desc) {
+        $desc = $xpc->findvalue( 's:text[@textart="Allgemein"]' );
+    }
+
+    $ce->{description} = norm($desc) if $self->{KeepDesc} and $desc and $desc ne "";
+
     $self->{datastore}->AddProgramme( $ce );
+
+    progress("MTVde: $chd->{xmltvid}: ".$ce->{start_time}." - ".$ce->{title});
 
 #    d( $xpc->getContextNode()->toString() . Dumper ( $ce ) );
 

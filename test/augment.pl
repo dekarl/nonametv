@@ -17,7 +17,7 @@ my $ds = CreateDataStore( );
 my $dt = DateTime->now( time_zone => 'UTC' );
 $dt->add( days => 7 );
 
-my $batchid = 'neo.zdf.de_' . $dt->week_year() . '-' . $dt->week();
+my $batchid = 'film.tv4.se_2013-03-11';
 printf( "augmenting %s...\n", $batchid );
 
 my $augmenter = NonameTV::Augmenter->new( $ds );

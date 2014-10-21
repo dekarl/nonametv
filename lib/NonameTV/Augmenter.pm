@@ -7,6 +7,7 @@ use utf8;
 
 use NonameTV::Factory qw/CreateAugmenter/;
 use NonameTV::Log qw/d/;
+use Data::Dumper;
 
 #
 # THIS IS NOT THE BASE CLASS FOR AUGMENTERS! (CONTRARY TO HOW IMPORTER.PM IS THE BASE CLASS FOR IMPORTERS)
@@ -200,7 +201,7 @@ sub AugmentBatch( $$ ) {
         FROM channels c, augmenterrules ar
        WHERE c.xmltvid LIKE ?
          AND (ar.channel_id = c.id
-          OR  ar.channel_id IS NULL)",
+          OR  ar.channel_id IS NULL) ORDER BY ar.remoteref DESC",
       [$channel_xmltvid] );
 
   my $augmenter = { };
@@ -344,7 +345,7 @@ sub AugmentBatch( $$ ) {
         last;
       }
 
-      d( 'best matching rule: ' . sprint_rule( $rule ) . "\n" );
+      d( 'best matching rule: ' .  sprint_rule( $rule ) . "\n" );
 
       # apply the rule
       ( $newprogram, $result ) = $augmenter->{$rule->{augmenter}}->AugmentProgram( $ce, $rule );

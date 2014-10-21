@@ -31,10 +31,11 @@ BEGIN {
                       Word2Xml Wordfile2Xml 
 		      File2Xml Content2Xml
 		      FindParagraphs
-                      norm normLatin1 normUtf8 AddCategory
+                      norm normLatin1 normUtf8
+                      AddCategory AddCountry
                       ParseDescCatSwe FixProgrammeData
-		      ParseXml ParseXmltv
-                      MonthNumber
+		      ParseXml ParseXmltv ParseJson
+                      MonthNumber DayNumber
                       CompareArrays
                      /;
 }
@@ -80,6 +81,7 @@ my %ent = (
            8220 => '"',
            8221 => '"',
            8230 => '...',
+           34 => '"',
            8364 => "(euro)",
            );
 
@@ -103,6 +105,47 @@ sub expand_entities
   $str =~ s/\&#(\d+);/_expand($1,$str)/eg;
 
   return $str;
+}
+
+=item PDF2Xml( $filename )
+
+Convert a PDF-file into a XML::LibXML::Document.
+
+=cut
+
+sub PDF2Xml {
+  my( $filename ) = @_;
+
+  my $xml_main = qx/pdftohtml -xml -stdout "$filename" -/;
+  if( $? )
+  {
+    w "pdftohtml -xml -stdout $filename - failed: $?";
+    return undef;
+  }
+
+  # Remove character that makes LibXML choke.
+  $xml_main =~ s/\&hellip;/.../g;
+
+    my $xml = XML::LibXML->new;
+    $xml->recover(1);
+
+    # Remove character that makes the parser stop.
+    $xml_main =~ s/\x00//g;
+
+    my $doc;
+    eval { $doc = $xml->parse_string($xml_main, {
+      recover => 1,
+      suppress_errors => 1,
+      suppress_warnings => 1,
+    }); };
+
+    if( $@ ne "" ) {
+      my ($package, $filename, $line) = caller;
+      print "parse_string failed: $@ when called from $filename:$line\n";
+      return undef;
+    }
+
+    return $doc;
 }
 
 =item Html2Xml( $content )
@@ -383,6 +426,27 @@ sub AddCategory
   }
 }
 
+=item AddCountry
+
+Add country to an entry if the entry does not already
+have a country.
+
+AddCountry( $ce, $country );
+
+=cut
+
+sub AddCountry
+{
+  my( $ce, $country ) = @_;
+
+  if( not defined( $ce->{country} ) and defined( $country )
+      and ( $country =~ /\S/ ) )
+  {
+    $ce->{country} = $country;
+  }
+
+}
+
 =item ParseDescCatSwe
 
 Parse a program description in Swedish and return program_type
@@ -442,21 +506,32 @@ $sm->AddRegexp( qr/intervjuserie/i,     			[ 'series', 'Talk' ] );
 #$sm->AddRegexp( qr/\b\s*film\b/i,        					[ 'movie', "Movies" ] );
 
 # Movies
-$sm->AddRegexp( qr/\b(familje|drama|action)*komedi\b/i,  [ 'movie', "Comedy" ] );
+$sm->AddRegexp( qr/\b(svensk|amerikansk|familje|drama|action|thriller|romantisk)*komedi\b/i,  [ 'movie', "Comedy" ] ); # Sets even series at movies
 
-$sm->AddRegexp( qr/\b(krigs|kriminal)*drama\b/i,  [ 'movie', "Drama" ] );
+$sm->AddRegexp( qr/\b(krigs|kriminal|action)*drama\b/i,  [ 'movie', "Drama" ] );
+
+$sm->AddRegexp( qr/familjefilm/i,         		  [ 'movie', "Family" ] );
 
 $sm->AddRegexp( qr/\baction(drama|film)*\b/i,     [ 'movie', "Action/Adv" ] );
-
+$sm->AddRegexp( qr/actionthrillerfilm/i,     	  [ 'movie', "Action/Thriller" ] );
+$sm->AddRegexp( qr/äventyrsfilm/i,     			  [ 'movie', 'Action/Adv' ] );
+$sm->AddRegexp( qr/westernfilm/i,     			  [ 'movie', 'Western' ] );
 $sm->AddRegexp( qr/\b.ventyrsdrama\b/i,           [ 'movie', "Action/Adv" ] );
+$sm->AddRegexp( qr/skräckfilm/i,     			  [ 'movie', 'Horror' ] );
+$sm->AddRegexp( qr/\b(amerikansk)*rysare\b/i,	  [ 'movie', "Horror" ] );
 
 $sm->AddRegexp( qr/\bv.stern(film)*\b/i,          [ 'movie', undef ] );
 
-$sm->AddRegexp( qr/\b(drama)*thriller\b/i,        [ 'movie', "Crime" ] );
+$sm->AddRegexp( qr/\b(action|drama)*thriller\b/i,        [ 'movie', "Crime" ] );
 
 $sm->AddRegexp( qr/\bscience\s*fiction(rysare)*\b/i, [ 'movie', "SciFi" ] );
 
-$sm->AddRegexp( qr/\b(l.ng)*film\b/i,             [ 'movie', undef ] );
+$sm->AddRegexp( qr/\b(l.ng)\s*film\b/i,             [ 'movie', undef ] );
+
+$sm->AddRegexp( qr/\bbollywoodfilm\b/i,             [ 'movie', "Bollywood" ] );
+$sm->AddRegexp( qr/långfilm/i,                 [ 'movie', undef ] );
+$sm->AddRegexp( qr/tv-film/i,                 [ 'movie', undef ] );
+
 
 # Kanal 5
 $sm->AddRegexp( qr/\bkomedifilm\b/i,             [ 'movie', "Comedy" ] );
@@ -466,7 +541,7 @@ $sm->AddRegexp( qr/\bdramafilm\b/i,        			 [ 'movie', "Drama" ] );
 $sm->AddRegexp( qr/\bactionthrillerfilm\b/i,     [ 'movie', "Action/Thriller" ] );
 $sm->AddRegexp( qr/\bkriminaldramafilm\b/i,      [ 'movie', "Crime/Drama" ] );
 $sm->AddRegexp( qr/\bdramathrillerfilm\b/i,        [ 'movie', "Crime" ] );
-
+$sm->AddRegexp( qr/\bdramakomedifilm\b/i,        [ 'movie', "Comedy" ] );
 
 
 sub ParseDescCatSwe
@@ -541,6 +616,35 @@ sub ParseXml {
   };
   if( $@ )   {
     w "Failed to parse xml: $@";
+    return undef;
+  }
+
+  return $doc;
+}
+
+=pod 
+
+my $doc = ParseJson( $strref );
+
+Parse an json-string
+
+=cut
+
+my $json;
+
+sub ParseJson {
+  my( $cref ) = @_;
+
+  if( not defined $json ) {
+    $json = new JSON;
+  }
+  
+  my $doc;
+  eval { 
+    $doc = $json->allow_nonref->utf8->relaxed->escape_slash->loose->allow_singlequote->allow_barekey->decode($$cref); 
+  };
+  if( $@ )   {
+    w "Failed to parse json: $@";
     return undef;
   }
 
@@ -840,9 +944,9 @@ sub MonthNumber {
     @months_7 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
     @months_8 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
   } elsif( $lang =~ /^ru$/ ){
-    @months_1 = qw/jan fav mar aprelja maja jui jul aou sep oct nov dec/;
-    @months_2 = qw/JANVIER FÉVRIER mars avril mai juin juillet aout septembre octobre novembre DÉCEMBRE/;
-    @months_3 = qw/janvier favrier mars avril mai juin juillet aout septembre octobre novembre DÉCEMBRE/;
+    @months_1 = qw/jan feb mar apr may jun jul avg sep oct nov dec/;
+    @months_2 = qw/JANVIER FÉVRIER mars aprelja mai juin ijulja avgusta sentjabrja oktjabrja novjabrja DÉCEMBRE/;
+    @months_3 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
     @months_4 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
     @months_5 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
     @months_6 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
@@ -851,6 +955,33 @@ sub MonthNumber {
   } elsif( $lang =~ /^sv$/ ){
     @months_1 = qw/jan feb mar apr maj jun jul aug sep okt nov dec/;
     @months_2 = qw/januari februari mars april maj juni juli augusti september oktober november december/;
+    @months_3 = qw/jan feb mar apr maj jun jul aug sept okt nov dec/;
+    @months_4 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+    @months_5 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+    @months_6 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+    @months_7 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+    @months_8 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+  } elsif( $lang =~ /^dk$/ or $lang =~ /^da$/ ){
+    @months_1 = qw/jan feb mar apr maj jun jul aug sep okt nov dec/;
+    @months_2 = qw/januar februar marts april maj juni juli august september oktober november december/;
+    @months_3 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+    @months_4 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+    @months_5 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+    @months_6 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+    @months_7 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+    @months_8 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+  } elsif( $lang =~ /^nl$/ ){
+    @months_1 = qw/jan feb mrt apr mei jun jul aug sep okt nov dec/;
+    @months_2 = qw/januari februari maart april mei juni juli augustus september oktober november december/;
+    @months_3 = qw/jan feb maa apr mei jun jul aug sep okt nov dec/;
+    @months_4 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+    @months_5 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+    @months_6 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+    @months_7 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+    @months_8 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
+  } elsif( $lang =~ /^no$/ ){
+    @months_1 = qw/jan feb mrt apr mei jun jul aug sep okt nov dec/;
+    @months_2 = qw/januar februar mars april mai juni juli august september oktober november desember/;
     @months_3 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
     @months_4 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
     @months_5 = qw/1 2 3 4 5 6 7 8 9 10 11 12/;
@@ -897,6 +1028,38 @@ sub MonthNumber {
   my $lcmonth = $monthnames{lc $monthname};
 
   return $month||$lcmonth;
+}
+
+=pod
+
+Convert day name to day number
+
+=cut
+
+sub DayNumber {
+  my( $dayname , $lang ) = @_;
+
+  my( @days_1, @days_2 );
+
+  if( $lang =~ /^en$/ ){
+    @days_1 = qw/Monday Tuesday Wednesday Thursday Friday Saturday Sunday/;
+    @days_2 = qw/0 1 2 3 4 5 6/;
+  }
+
+  my %daynames = ();
+
+  for( my $i = 0; $i < scalar(@days_1); $i++ ){
+    $daynames{$days_1[$i]} = $i+1;
+  }
+
+  for( my $i = 0; $i < scalar(@days_2); $i++ ){
+    $daynames{$days_2[$i]} = $i+1;
+  }
+
+  my $day = $daynames{$dayname};
+  my $lcday = $daynames{lc $dayname};
+
+  return $day||$lcday;
 }
 
 =begin nd

@@ -1,0 +1,69 @@
+#!/usr/bin/perl -w
+
+use strict;
+
+use FindBin;
+use lib "$FindBin::Bin/../lib";
+
+use DateTime;
+use File::Util;
+use File::Copy qw/copy move/;
+
+use NonameTV;
+use NonameTV::DataStore;
+use NonameTV::Config qw/ReadConfig/;
+use NonameTV::Log qw/progress error d p w f/;
+
+use Getopt::Long;
+
+my $opt = { 'verbose' => 0 };
+
+my $res = GetOptions( $opt, qw/verbose/ );
+
+NonameTV::Log::SetVerbosity( $opt->{verbose} );
+
+# Read configuration
+my $conf = ReadConfig();
+my $ds = NonameTV::DataStore->new( $conf->{DataStore} );
+my $filestore = $conf->{FileStore};
+
+# Channels
+my %channel_data;
+$channel_data{ "K1C" } = "classics.kabel1.de";
+$channel_data{ "K1" }  = "kabel1.de";
+$channel_data{ "P7F" } = "fun.prosieben.de";
+$channel_data{ "P7M" } = "maxx.prosieben.de";
+$channel_data{ "S1E" } = "emotions.sat1.de";
+$channel_data{ "P7" }  = "prosieben.de";
+$channel_data{ "P4" }  = "puls4.at";
+$channel_data{ "S1" }  = "sat1.de";
+$channel_data{ "S1G" } = "gold.sat1.de";
+$channel_data{ "SX" }  = "sixx.de";
+
+  # list files inside of the channel directory and check when they have been touched
+  my( $cf ) = File::Util->new();
+  my( @cffiles ) = $cf->list_dir( "/nonametv/autoupload/prosieben", '--no-fsdots' );
+  foreach my $cff (@cffiles)
+  {
+    if($cff =~ /^\./) { next; }
+    my ( $id, $week, $year ) = split(/_/, $cff);
+
+    my $cftype = join(',', File::Util->file_type( "/nonametv/autoupload/prosieben/$cff" ) );
+
+    if( $cff !~ /\.xml$/i ){
+        #progress( "File $cff isn't a xml file - skipping" );
+        next;
+    }
+
+    if( not exists( $channel_data{$id} ) )
+    {
+        print "Files with name $id hasnt been specified as a channel.\n";
+        #unlink "/nonametv/autoupload/prosieben/$cff";
+    } else {
+      move( "/nonametv/autoupload/prosieben/$cff", "$filestore/$channel_data{$id}/$cff" );
+      print "$cff moved to $channel_data{$id}\n";
+    }
+
+  }
+
+exit;

@@ -18,6 +18,11 @@ use POSIX;
 use DateTime;
 use XML::LibXML;
 use Spreadsheet::ParseExcel;
+use Spreadsheet::XLSX;
+use Spreadsheet::XLSX::Utility2007 qw(ExcelFmt ExcelLocaltime LocaltimeExcel);
+
+use Text::Iconv;
+ my $converter = Text::Iconv -> new ("utf-8", "windows-1251");
 
 use NonameTV qw/norm/;
 use NonameTV::DataStore::Helper;
@@ -50,7 +55,7 @@ sub ImportContentFile {
 
   $self->{fileerror} = 0;
 
-  if( $file =~ /\.xls$/i ){
+  if( $file =~ /\.xlsx|.xls$/i ){
     $self->ImportXLS( $file, $chd );
   } else {
     error( "Mtve_mail: Unknown file format: $file" );
@@ -72,9 +77,11 @@ sub ImportXLS
   my $currdate = "x";
   my @ces;
   
-  progress( "Mtve_mail: $chd->{xmltvid}: Processing flat XLS $file" );
+  progress( "Mtve_mail: $chd->{xmltvid}: Processing $file" );
 
-  my $oBook = Spreadsheet::ParseExcel::Workbook->Parse( $file );
+	my $oBook;
+	if ( $file =~ /\.xlsx$/i ){ progress( "using .xlsx" );  $oBook = Spreadsheet::XLSX -> new ($file, $converter); }
+	else { $oBook = Spreadsheet::ParseExcel::Workbook->Parse( $file );  }   #  staro, za .xls
 
   # main loop
   foreach my $oWkS (@{$oBook->{Worksheet}}) {
@@ -94,14 +101,18 @@ sub ImportXLS
           if( $oWkS->{Cells}[$iR][$iC] ){
             $columns{$oWkS->{Cells}[$iR][$iC]->Value} = $iC;
 
-						$columns{'Date'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Start/ );
-						$columns{'Title'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Title/ );
-          
+			$columns{'Start'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Start/ );
+			$columns{'End'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /End/ );
+			$columns{'Title'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Title/ );
+			$columns{'Date'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Date/ );
+            $columns{'Time'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Time/ );
           	
           
           	$columns{'Description'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Description/ );
+          	$columns{'Description'} = $iC if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Synopsis/ );
 
-            $foundcolumns = 1 if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Start/ );
+
+            $foundcolumns = 1 if( $oWkS->{Cells}[$iR][$iC]->Value =~ /Date/ );
           }
         }
 #foreach my $cl (%columns) {
@@ -112,18 +123,23 @@ sub ImportXLS
         next;
       }
 
-
-
-      # date & Time - column 1 ('Date')
-      my $start = $self->create_dt( $oWkS->{Cells}[$iR][$columns{'Date'}]->Value );
-      my $date = $start->ymd("-");
+	  my $oWkDate = $oWkS->{Cells}[$iR][$columns{'Date'}];
+      next if( ! $oWkDate );
+      $date = ParseDate( $oWkDate->Value );
       next if( ! $date );
-      my $time = $start->hms(":");
 
-	  	# Startdate
+	  #Convert Excel Time -> localtime
+      my $oWkTime = $oWkS->{Cells}[$iR][$columns{'Time'}];
+      next if( ! $oWkTime );
+      my $time = ExcelFmt('hh:mm', $oWkTime->Value);
+      next if( ! $date );
+
+
+
+	  # Startdate
       if( $date ne $currdate ) {
       	if( $currdate ne "x" ) {
-					$dsh->EndBatch( 1 );
+		    $dsh->EndBatch( 1 );
         }
       
       	my $batchid = $chd->{xmltvid} . "_" . $date;
@@ -137,22 +153,17 @@ sub ImportXLS
       my $oWkC = $oWkS->{Cells}[$iR][$columns{'Title'}];
       next if( ! $oWkC );
       my $title = $oWkC->Value if( $oWkC->Value );
-      
-      # Remove *** Premiere *** 
-      $title =~ s/\*\*\* premiere\*\*\* //g; 
-      $title =~ s/\*\*\* PREMIERE \*\*\* //g; 
-      
-      # Uppercase the first letter
-      $title = ucfirst($title);
-      
-      # Replace and upstring
-      $title =~ s/Hd/HD/;  #replace hd with HD
+      $title =~ s/\.\.\.//g;
+      $title =~ s/\.\.//g;
+      $title =~ s/&amp;/&/g;
+      $title =~ s/@/at/g;
 
-	  	# descr (column 7)
-	  	my $desc = $oWkS->{Cells}[$iR][$columns{'Description'}]->Value if $oWkS->{Cells}[$iR][$columns{'Description'}];
 
-			# empty last day array
-     	undef @ces;
+	  # descr (column 7)
+	  my $desc = $oWkS->{Cells}[$iR][$columns{'Description'}]->Value if $oWkS->{Cells}[$iR][$columns{'Description'}];
+
+	  # empty last day array
+      undef @ces;
 
       my $ce = {
         channel_id => $chd->{channel_id},
@@ -163,45 +174,48 @@ sub ImportXLS
       
       # Seperate :
       my ( $subtitle ) = ($ce->{title} =~ /:\s*(.+)$/);
-  		$ce->{title} =~ s/:\s*(.+)//;
-      
+  	  $ce->{title} =~ s/:\s*(.+)//;
       
       # Uc First it
-      ( $ce->{subtitle} ) = (ucfirst($subtitle)) if $subtitle;
+      ( $ce->{subtitle} ) = (norm($subtitle)) if $subtitle;
 
-			progress("Mtve_mail: $chd->{xmltvid}: $time - $title");
+	  progress("Mtve_mail: $chd->{xmltvid}: $time - $title");
       $dsh->AddProgramme( $ce );
 
-			push( @ces , $ce );
+	  push( @ces , $ce );
 
     } # next row
   } # next worksheet
 
-	$dsh->EndBatch( 1 );
+  $dsh->EndBatch( 1 );
 
   return 1;
 }
 
-sub create_dt
-{
-  my $self = shift;
-  my( $str ) = @_;
-  
-  my( $year, $month, $day, $hour, $minute ) = 
-      ($str =~ /(\d+)-(\d+)-(\d+) (\d+):(\d+)$/ );
+sub ParseDate {
+  my ( $text ) = @_;
 
-  my $dt = DateTime->new( year   => $year,
-                          month  => $month,
-                          day    => $day,
-                          hour   => $hour,
-                          minute => $minute,
-                          time_zone => 'Europe/Stockholm',
-                          );
-  
-  $dt->set_time_zone( "UTC" );
-  
-  return $dt;
+  my( $year, $day, $month );
+
+  # format '2011-04-13'
+  if( $text =~ /^\d{4}\-\d{2}\-\d{2}$/i ){
+    ( $year, $month, $day ) = ( $text =~ /^(\d{4})\-(\d{2})\-(\d{2})$/i );
+
+  # format '2011/05/16'
+  } elsif( $text =~ /^\d{4}\/\d{2}\/\d{2}$/i ){
+    ( $year, $month, $day ) = ( $text =~ /^(\d{4})\/(\d{2})\/(\d{2})$/i );
+  } elsif( $text =~ /^\d{1,2}-\d{1,2}-\d{2}$/ ){ # format '10-18-11' or '1-9-11'
+     ( $month, $day, $year ) = ( $text =~ /^(\d+)-(\d+)-(\d+)$/ );
+   }
+
+  if(!defined($year)) {
+    return;
+  }
+
+  $year += 2000 if $year < 100;
+
+
+	return sprintf( '%d-%02d-%02d', $year, $month, $day );
 }
-
 
 1;

@@ -128,7 +128,7 @@ sub ImportXLS
         $currdate = $date;
       }
 
-	  	# time
+	  # time
       $oWkC = $oWkS->{Cells}[$iR][$columns{'Time'}];
       next if( ! $oWkC );
       my $time = ParseTime($oWkC->Value) if( $oWkC->Value );
@@ -137,18 +137,17 @@ sub ImportXLS
       $oWkC = $oWkS->{Cells}[$iR][$columns{'Title'}];
       next if( ! $oWkC );
       my $title = $oWkC->Value if( $oWkC->Value );
+      $title = ucfirst(lc($title)); # make it prettieh
       
-      # genre (column 8)
-	  	$oWkC = $oWkS->{Cells}[$iR][8];
+      # genre (column 6)
+	  $oWkC = $oWkS->{Cells}[$iR][6];
       my $genre = $oWkC->Value;
 
-	  	# descr (column 9)
-	  	my $desc = $oWkS->{Cells}[$iR][$columns{'Description'}]->Value if $oWkS->{Cells}[$iR][$columns{'Description'}];
+	  # descr (column 9)
+	  my $desc = $oWkS->{Cells}[$iR][$columns{'Description'}]->Value if $oWkS->{Cells}[$iR][$columns{'Description'}];
 
-      
-
-			# empty last day array
-     	undef @ces;
+	  # empty last day array
+      undef @ces;
 
       my $ce = {
         channel_id => $chd->{channel_id},
@@ -158,19 +157,19 @@ sub ImportXLS
       };
       
       # Get genre
-			my($program_type, $category ) = $ds->LookupCat( 'TV5Monde', $genre );
-			AddCategory( $ce, $program_type, $category );
+	  my($program_type, $category ) = $ds->LookupCat( 'TV5Monde', $genre );
+	  AddCategory( $ce, $program_type, $category );
 
-			# Add
-			progress("TV5Monde: $chd->{xmltvid}: $time - $title");
+	  # Add
+	  progress("TV5Monde: $chd->{xmltvid}: $time - $title");
       $dsh->AddProgramme( $ce );
 
-			push( @ces , $ce );
+	  push( @ces , $ce );
 
     } # next row
   } # next worksheet
 
-	$dsh->EndBatch( 1 );
+  $dsh->EndBatch( 1 );
 
   return 1;
 }
@@ -200,6 +199,42 @@ sub ParseDate {
   # format '2011/05/16'
   } elsif( $text =~ /^\d{2}\/\d{2}\/\d{4}$/i ){
     ( $day, $month, $year ) = ( $text =~ /^(\d{2})\/(\d{2})\/(\d{4})$/i );
+  } elsif( $text =~ /^(\d+)-Janvier-(\d+)$/ ){
+        ( $day, $year ) = ( $text =~ /^(\d+)-Janvier-(\d+)$/ );
+    $month = "01";
+  } elsif( $text =~ /^(\d+)-Février-(\d+)$/ ){
+        ( $day, $year ) = ( $text =~ /^(\d+)-Février-(\d+)$/ );
+    $month = "02";
+  } elsif( $text =~ /^(\d+)-Mars-(\d+)$/ ){
+        ( $day, $year ) = ( $text =~ /^(\d+)-Mars-(\d+)$/ );
+    $month = "03";
+  } elsif( $text =~ /^(\d+)-Avril-(\d+)$/ ){
+    ( $day, $year ) = ( $text =~ /^(\d+)-Avril-(\d+)$/ );
+    $month = "04";
+  } elsif( $text =~ /^(\d+)-Mai-(\d+)$/ ){
+    ( $day, $year ) = ( $text =~ /^(\d+)-Mai-(\d+)$/ );
+    $month = "05";
+  } elsif( $text =~ /^(\d+)-Juin-(\d+)$/ ){
+    ( $day, $year ) = ( $text =~ /^(\d+)-Juin-(\d+)$/ );
+    $month = "06";
+  } elsif( $text =~ /^(\d+)-Juillet-(\d+)$/ ){
+    ( $day, $year ) = ( $text =~ /^(\d+)-Juillet-(\d+)$/ );
+    $month = "07";
+  } elsif( $text =~ /^(\d+)-Août-(\d+)$/ ){
+    ( $day, $year ) = ( $text =~ /^(\d+)-Août-(\d+)$/ );
+    $month = "08";
+  } elsif( $text =~ /^(\d+)-Septembre-(\d+)$/ ){
+  	( $day, $year ) = ( $text =~ /^(\d+)-Septembre-(\d+)$/ );
+    $month = "09";
+  } elsif( $text =~ /^(\d+)-Octobre-(\d+)$/ ){
+        ( $day, $year ) = ( $text =~ /^(\d+)-Octobre-(\d+)$/ );
+    $month = "10";
+  } elsif( $text =~ /^(\d+)-Novembre-(\d+)$/ ){
+        ( $day, $year ) = ( $text =~ /^(\d+)-Novembre-(\d+)$/ );
+    $month = "11";
+  } elsif( $text =~ /^(\d+)-Décembre-(\d+)$/ ){
+        ( $day, $year ) = ( $text =~ /^(\d+)-Décembre-(\d+)$/ );
+    $month = "12";
   }
 
   $year += 2000 if $year < 100;

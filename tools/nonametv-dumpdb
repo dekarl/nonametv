@@ -32,6 +32,7 @@ The following tables are included:
 channels
 channelgroups
 trans_cat
+trans_country
 languagestrings
 epgservers
 dvb_cat
@@ -54,7 +55,7 @@ my $conf = ReadConfig();
 
 my $ds = NonameTV::DataStore->new( $conf->{DataStore} );
 
-dump_structure( "$datadir/listings.sql" );
+dump_structure( "$datadir/listings.sql" ); # bugs out on mariadb
 
 dump_table( $ds, "languagestrings", "$datadir/languagestrings.txt" );
 dump_table( $ds, "dvb_cat", "$datadir/dvb_cat.txt" );
@@ -63,6 +64,7 @@ dump_table( $ds, "channels", "$datadir/$country/channels.txt" );
 dump_table( $ds, "channelgroups", "$datadir/$country/channelgroups.txt" );
 dump_table( $ds, "trans_cat", "$datadir/$country/trans_cat.txt",
 	    "not (program_type='' and category='')" );
+dump_table( $ds, "trans_country", "$datadir/$country/trans_country.txt" );
 dump_table( $ds, "epgservers", "$datadir/$country/epgservers.txt" );
 dump_table( $ds, "networks", "$datadir/$country/networks.txt" );
 dump_table( $ds, "services", "$datadir/$country/services.txt" );
@@ -75,13 +77,14 @@ sub dump_structure {
 
   my $dbuser = $conf->{DataStore}->{username};
   my $dbpassword = $conf->{DataStore}->{password};
+  my $dbhost = $conf->{DataStore}->{dbhost};
   my $dbname = $conf->{DataStore}->{dbname};
 
   print "Writing database structure to $outfile\n";
 
   my @tables = qw/
       batches channels channelgroups files
-      programs state trans_cat languagestrings
+      programs state trans_cat trans_country languagestrings
       epgservers dvb_cat networks services transportstreams
       admins augmenterrules jobs dvb_service_pointer
       /;
@@ -93,7 +96,7 @@ sub dump_structure {
     $pw = "-p$dbpassword";
   }
 
-  my $output = qx/mysqldump -u$dbuser $pw $dbname $command/;
+  my $output = qx/mysqldump -h$dbhost -u$dbuser $pw $dbname $command/;
 
   # Remove comments
   $output =~ s(/\*.*?\*/;\n)()gm;

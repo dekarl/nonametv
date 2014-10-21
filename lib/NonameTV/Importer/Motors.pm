@@ -89,21 +89,11 @@ sub ImportXLS {
     progress( "Motors XLS: $chd->{xmltvid}: Processing worksheet: $oWkS->{Name}" );
 
     # browse through rows
-    for(my $iR = $oWkS->{MinRow} ; defined $oWkS->{MaxRow} && $iR <= $oWkS->{MaxRow} ; $iR++) {
+    for(my $iR = 1 ; defined $oWkS->{MaxRow} && $iR <= $oWkS->{MaxRow} ; $iR++) {
 
-      # get the names of the columns from the 1st row
-      if( not %columns ){
-        for(my $iC = $oWkS->{MinCol} ; defined $oWkS->{MaxCol} && $iC <= $oWkS->{MaxCol} ; $iC++) {
-          $columns{$oWkS->{Cells}[$iR][$iC]->Value} = $iC;
-        }
-#foreach my $col (%columns) {
-#print ">$col<\n";
-#}
-        next;
-      }
 
       # date - column 0 ('Date de diffusion')
-      my $oWkC = $oWkS->{Cells}[$iR]['Date de diffusion'];
+      my $oWkC = $oWkS->{Cells}[$iR][0];
       if( $oWkC ){
         if( $date = ParseDate( $oWkC->Value ) ){
 
@@ -120,15 +110,28 @@ sub ImportXLS {
         }
       }
 
+
       # time - column 1 ('Horaire')
-      $oWkC = $oWkS->{Cells}[$iR][$columns{'Horaire'}];
+      $oWkC = $oWkS->{Cells}[$iR][1];
       next if( ! $oWkC );
       my $time = $oWkC->Value if( $oWkC->Value );
+      
+      # Sometimes Motors somehow add 24:00:00 in the time field, that fucks the system up. 
+      my ( $hour , $min ) = ( $time =~ /^(\d+):(\d+)/ );
+      if($hour eq "24") {
+      	$hour = "00";
+      }
+      
+      $time = $hour.":".$min;
 
       # title - column 2 ('Titre du produit')
-      $oWkC = $oWkS->{Cells}[$iR][$columns{'Titre du produit'}];
+      $oWkC = $oWkS->{Cells}[$iR][2];
       next if( ! $oWkC );
       my $title = $oWkC->Value if( $oWkC->Value );
+      $title =~ s/\(Live\)//g; # Dont keep live in the text
+      $title = ucfirst(lc(norm($title))); # make it prettieh
+
+
 
       my ( $subtitle, $description );
 
@@ -136,18 +139,18 @@ sub ImportXLS {
       $subtitle = $oWkS->{Cells}[$iR][3]->Value if $oWkS->{Cells}[$iR][3];
 
       # description - column 4 ('PRESSE UK')
-      $description = $oWkS->{Cells}[$iR][$columns{'PRESSE UK'}]->Value if $oWkS->{Cells}[$iR][$columns{'PRESSE UK'}];
+      $description = $oWkS->{Cells}[$iR][5]->Value if $oWkS->{Cells}[$iR][5];
 
       progress("Motors XLS: $xmltvid: $time - $title");
 
       my $ce = {
         channel_id => $channel_id,
-        title => $title,
+        title => norm($title),
         start_time => $time,
       };
 
-      $ce->{subtitle} = $subtitle if $subtitle;
-      $ce->{description} = $description if $description;
+      $ce->{subtitle} = norm($subtitle) if $subtitle;
+      $ce->{description} = norm($description) if $description;
 
       $dsh->AddProgramme( $ce );
     }
@@ -250,8 +253,6 @@ sub ImportCSV {
 
 sub ParseDate {
   my( $text ) = @_;
-
-#print ">$text<\n";
 
   return undef if( ! $text );
 

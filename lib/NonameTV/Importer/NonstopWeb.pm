@@ -5,7 +5,7 @@ use warnings;
 
 =pod
 
-Importer for data from Nonstop. 
+Importer for data from Nonstop.
 One file per channel and month downloaded from their site.
 The downloaded file is in xml-format.
 
@@ -14,8 +14,9 @@ The downloaded file is in xml-format.
 use DateTime;
 use XML::LibXML;
 use HTTP::Date;
+use Data::Dumper;
 
-use NonameTV qw/ParseXml norm AddCategory/;
+use NonameTV qw/ParseXml norm AddCountry AddCategory/;
 use NonameTV::Log qw/w progress error f/;
 
 use NonameTV::Importer::BaseMonthly;
@@ -25,12 +26,12 @@ use base 'NonameTV::Importer::BaseMonthly';
 sub new {
     my $proto = shift;
     my $class = ref($proto) || $proto;
-    my $self  = $class->SUPER::new( @_ );
+    my $self = $class->SUPER::new( @_ );
     bless ($self, $class);
 
 
     $self->{MinMonths} = 0 unless defined $self->{MinMonths};
-    $self->{MaxMonths} = 4 unless defined $self->{MaxMonths};
+    $self->{MaxMonths} = 2 unless defined $self->{MaxMonths};
 
     defined( $self->{UrlRoot} ) or die "You must specify UrlRoot";
     
@@ -74,7 +75,7 @@ sub FilterContent {
 
   if( not defined $doc ) {
     return (undef, "ParseXml failed" );
-  } 
+  }
 
   # Find all "Schedule"-entries.
   my $ns = $doc->find( "//rs:data" );
@@ -127,68 +128,141 @@ sub ImportContent
   foreach my $sc ($ns->get_nodelist)
   {
     my $title_original = $sc->findvalue( './@SeriesOriginalTitle' );
-	my $title_programme = $sc->findvalue( './@ProgrammeSeriesTitle' );
-	my $title = norm($title_programme) || norm($title_original);
+    my $title_programme = $sc->findvalue( './@ProgrammeSeriesTitle' );
+    my $title = norm($title_programme) || norm($title_original);
 
     my $start = $self->create_dt( $sc->findvalue( './@SlotLocalStartTime' ) );
     if( not defined $start )
     {
-      w "Invalid starttime '" 
+      w "Invalid starttime '"
           . $sc->findvalue( './@SlotLocalStartTime' ) . "'. Skipping.";
       next;
     }
     
     my $desc = undef;
     my $desc_episode = $sc->findvalue( './@ProgrammeEpisodeLongSynopsis' );
-	my $desc_series  = $sc->findvalue( './@ProgrammeSeriesLongSynopsis' );
+	my $desc_series = $sc->findvalue( './@ProgrammeSeriesLongSynopsis' );
 	$desc = $desc_episode || $desc_series;
-	
+
 	my $genre = $sc->findvalue( './@SeriesGenreDescription' );
 	my $production_year = $sc->findvalue( './@ProgrammeSeriesYear' );
-	my $subtitle =  $sc->findvalue( './@ProgrammeEpisodeTitle' );
-	my $aspect =  $sc->findvalue( './@ProgrammeVersionTechnicalTypesAspect_Ratio' );
-
-	progress("Nonstop: $chd->{xmltvid}: $start - $title");
+		# Subtitle, DefaultEpisodeTitle contains the original episodetitle.
+        # I.e. Plastic Buffet for Robot Chicken
+        # For some series (mostly on TNT7) defaultepisodetitle contains (Part {episodenum})
+        # That should be remove later on, but for now you should use Tvdb augmenter for that.
+    my $subtitle_episode = $sc->findvalue( './@ProgrammeEpisodeTitle' );
+    my $subtitle_default = $sc->findvalue( './@DefaultEpisodeTitle' );
+    my $subtitle = norm($subtitle_episode) || norm($subtitle_default);
+    my $aspect = $sc->findvalue( './@ProgrammeVersionTechnicalTypesAspect_Ratio' );
+    my $country = $sc->findvalue( './@SeriesCountryOfOrigin' );
 
     my $ce = {
-      title 	  => norm($title),
-      channel_id  => $chd->{id},
+      title => norm($title),
+      channel_id => $chd->{id},
       description => norm($desc),
-      start_time  => $start->ymd("-") . " " . $start->hms(":"),
+      start_time => $start->ymd("-") . " " . $start->hms(":"),
     };
+
+    my($country2 ) = $ds->LookupCountry( "Nonstop", norm($country) );
+    AddCountry( $ce, $country2 );
     
-    $ce->{subtitle} = $subtitle if $subtitle;
-    
-    my ( $season, $episode ) = ($desc =~ /\(Säsong\s*(\d+)\s*avsnitt\s*(\d+)\)/ );
+    my ( $dummy, $season, $dummy2, $episode ) = ($desc =~ /\((S.song|Season)\s*(\d+)\s*(avsnitt|episode)\s*(\d+)\)/i );
     
     if((defined $season) and ($episode > 0) and ($season > 0) )
     {
-      $ce->{episode} = sprintf( "%d . %d .", $season-1, $episode-1 );
+        $ce->{episode} = sprintf( "%d . %d .", $season-1, $episode-1 );
+        $ce->{program_type} = "series";
     }
     elsif((defined $episode) and ($episode > 0) )
     {
-      $ce->{episode} = sprintf( ". %d .", $episode-1 );
+        $ce->{episode} = sprintf( ". %d .", $episode-1 );
+        $ce->{program_type} = "series";
     }
+        
+        $ce->{description} =~ s/\(S.song(.*)\)$//;
+        $ce->{description} =~ s/\(Season(.*)\)$//;
+        
+        # Year (it should actually get year from augmenter instead (as sometimes it's the wrong year))
+        if( defined( $production_year ) and ($production_year =~ /(\d\d\d\d)/) )
+        {
+            $ce->{production_date} = "$1-01-01";
+        }
+        
+        
+        # Genre
+        if( $genre ){
+            my($program_type, $category ) = $ds->LookupCat( 'Nonstop', $genre );
+            AddCategory( $ce, $program_type, $category );
+        }
+        
+        # HD
+        if($sc->findvalue( './@HighDefinition' ) eq "1") {
+            $ce->{quality} = "HDTV";
+        }
+        
+        # On movies, the subtitle (defaultepisodetitle) is same as seriestitle
+        if($title ne $subtitle) {
+            #if(defined($ce->{program_type}) and ($ce->{program_type} ne "movie")) {
+                $ce->{subtitle} = $subtitle if $subtitle;
+            #}
+        }
+        
+        # Get credits
+        # Make arrays
+        my @actors;
+        my @directors;
+        my @writers;
     
-    if( defined( $production_year ) and ($production_year =~ /(\d\d\d\d)/) )
-    {
-      $ce->{production_date} = "$1-01-01";
-    }
+        # Change $iv if they add more actors in the future
+        for( my $v=1; $v<=5; $v++ ) {
+            my $actor_name = norm($sc->findvalue( './@ProgrammeSeriesCreditsContact' . $v ));
+            my $job = $sc->findvalue( './@ProgrammeSeriesCreditsCredit' . $v );
+            # Check if it's defined (that that actor is already in the xmlfeed)
+            if(defined($actor_name)) {
+                # Check the job
+                if(defined($job) and $job =~ /Act/) {
+                    push(@actors, $actor_name);
+                }
+                if(defined($job) and $job =~ /Himself/) {
+                    push(@actors, $actor_name);
+                }
+                if(defined($job) and $job =~ /Director/) {
+                    push(@directors, $actor_name);
+                }
+                if(defined($job) and $job =~ /Creator/) {
+                    push(@writers, $actor_name);
+                }
+                
+            }
+        }
+        
+        # Get the peoples.
+        $ce->{actors} = join( ";", grep( /\S/, @actors ) );
+        $ce->{directors} = join( ";", grep( /\S/, @directors ) );
+        $ce->{writers} = join( ";", grep( /\S/, @writers ) );
+        
+        # Remove big subtitle for Commerical programmes.
+        if($ce->{title} eq "Commercial programming") {
+            $ce->{subtitle} = undef;
+        }
     
     
     
     if( (defined $aspect) and ($aspect eq "16*9 (2)")) {
-    	$ce->{aspect} = "16:9";
+     $ce->{aspect} = "16:9";
     } else {
-    	$ce->{aspect} = "4:3";
+     $ce->{aspect} = "4:3";
     }
     
     if( $genre ){
-			my($program_type, $category ) = $ds->LookupCat( 'Nonstop', $genre );
-			AddCategory( $ce, $program_type, $category );
+		my($program_type, $category ) = $ds->LookupCat( 'Nonstop', $genre );
+		AddCategory( $ce, $program_type, $category );
 	}
 
+	$ce->{original_title} = norm($title_original) if defined($title_original) and $ce->{title} ne norm($title_original) and norm($title_original) ne "";
+
     $ds->AddProgramme( $ce );
+    progress("Nonstop: $chd->{xmltvid}: $start - $title");
   }
   
   # Success
@@ -199,6 +273,11 @@ sub create_dt
 {
   my $self = shift;
   my( $str ) = @_;
+  
+  # Failsafe
+  if($str eq "2012-03-25T02:30:00") {
+  	next;
+  }
   
   my( $date, $time ) = split( 'T', $str );
 
@@ -217,13 +296,13 @@ sub create_dt
     return undef;
   }
 
-  my $dt = DateTime->new( year   => $year,
-                          month  => $month,
-                          day    => $day,
-                          hour   => $hour,
+  my $dt = DateTime->new( year => $year,
+                          month => $month,
+                          day => $day,
+                          hour => $hour,
                           minute => $minute,
                           second => $second,
-                          time_zone => 'Europe/Stockholm',
+                          time_zone => "Europe/Stockholm",
                           );
   
   $dt->set_time_zone( "UTC" );

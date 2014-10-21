@@ -39,6 +39,9 @@ sub new {
 
   my $dsh = NonameTV::DataStore::Helper->new( $self->{datastore} );
   $self->{datastorehelper} = $dsh;
+  
+  # use augment
+  $self->{datastore}->{augment} = 1;
 
   return $self;
 }
@@ -230,6 +233,7 @@ sub ImportXLS
       my $time;
       my $title = "x";
       my $description;
+      my $title_org;
 
       # browse through the shows
       # starting at row 2
@@ -245,6 +249,23 @@ sub ImportXLS
           # in the memory already
           if( $title ne "x" ){
 
+            # CN Dutch
+            if($xmltvid eq "cartoonnetwork.nl") {
+                if($title =~ /\((.*?)\)/) {
+                    ($title_org) = ($title =~ /\((.*?)\)/);
+                    $title_org =~ s/\(.*\)//g;
+                    $title_org =~ s/^NEW//i;
+                    $title_org =~ s/\- Season (\d+)//i;
+                    $title_org =~ s/^://i;
+                }
+            }
+
+		    # Remove (UU) and so on
+			$title =~ s/\(.*\)//g;
+			$title =~ s/^NIEUW//i;
+			$title =~ s/\- Season (\d+)//i;
+			$title =~ s/^://i;
+
             my $ce = {
               channel_id   => $channel_id,
               start_time => $time,
@@ -252,6 +273,7 @@ sub ImportXLS
             };
 
             $ce->{description} = $description if $description;
+            $ce->{original_title} = norm($title_org) if defined($title_org) and $ce->{title} ne norm($title_org) and norm($title_org) ne "";
 
             push( @ces , $ce );
             $description = "";
@@ -281,12 +303,71 @@ sub FlushDayData {
 
     if( @data ){
       foreach my $element (@data) {
+      	
+      	# Get year from description
+      	if(defined($element->{description})) {
+      		my( $year ) = ( $element->{description} =~ /^(\d\d\d\d),/ );
+      		if($year) {
+      			$element->{production_date} = $year."-01-01";
+      		}
+      		
+      		# Credits
+      		if( $element->{description} =~ /Dir:/ ) {
+      			my ( $dirs, $actors ) = ( $element->{description} =~ /Dir:\s+([A-Z].+?),\s+Act:\s+([A-Z].+?),\s+Sub/ );
+						# Put them into the array
+						if(defined($dirs) and $dirs ne "") {
+							#print Dumper($dirs, $actors);
+							my @directors = split( /\s*,\s*/, $dirs );
+							$element->{directors} = join( ";", grep( /\S/, @directors ) );
+						}
+						if(defined($actors) and $actors ne "") {
+							my @actors = split( /\s*,\s*/, $actors );
+							$element->{actors} = join( ";", grep( /\S/, @actors ) );
+						}
+						
+						# TCM only provides a weird description, so please use
+						# themoviedb.
+						if($xmltvid eq "tcmeurope.com") {
+							$element->{description} = undef;
+						}
+						
+						# Movies
+						$element->{program_type} = "movie";
+      		}
 
+      		if($xmltvid eq "cartoonnetwork.nl") {
+      		    my $subtitle = $element->{description};
+                if($subtitle =~ /\((.*?)\)/) {
+                    my($subtitle_org) = ($subtitle =~ /\((.*?)\)/);
+                    $subtitle =~ s/\(.*\)//g;
+                    $element->{original_subtitle} = norm($subtitle_org);
+                    $element->{program_type} = "series";
+                }
+
+                $element->{subtitle} = norm($subtitle);
+      		    $element->{description} = undef;
+      		}
+      	}
+      	
         progress("Turner: $xmltvid: $element->{start_time} - $element->{title}");
 
         $dsh->AddProgramme( $element );
       }
     }
+}
+# Split a string into individual sentences.
+sub split_text
+{
+  my( $t ) = @_;
+
+  return $t if $t !~ /\./;
+
+  $t =~ s/\n/ . /g;
+  $t =~ s/\.\.\./..../;
+  my @sent = grep( /\S/, split( /\.\s+/, $t ) );
+  map { s/\s+$// } @sent;
+  $sent[-1] =~ s/\.\s*$//;
+  return @sent;
 }
 
 sub isDate {

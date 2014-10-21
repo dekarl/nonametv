@@ -18,8 +18,9 @@ use utf8;
 use DateTime;
 use XML::LibXML;
 use DateTime;
+use String::Util 'trim';
 
-use NonameTV qw/MyGet norm Html2Xml ParseXml ParseDescCatSwe AddCategory/;
+use NonameTV qw/MyGet normLatin1 Html2Xml ParseXml ParseDescCatSwe AddCategory/;
 use NonameTV::DataStore::Helper;
 use NonameTV::Log qw/progress error/;
 
@@ -30,6 +31,8 @@ use base 'NonameTV::Importer::BaseDaily';
 my %channelids = ( "SVT1" => "svt1.svt.se",
                    "SVT2" => "svt2.svt.se",
                    );
+                   
+my @channels_no_hd = qw(svt1.svt.se svt2.svt.se);
 
 sub new {
     my $proto = shift;
@@ -240,11 +243,15 @@ sub ImportContent {
       next;
     }
     
+    my $title_fixed = trim(norm_title($title));
+    
     my $ce =  {
       start_time  => $starttime,
-      title       => norm_title($title),
+      title       => $title_fixed,
       description => norm_desc($desc),
     };
+    
+    #print("Title: '$title_fixed'\n");
     
     if( defined( $endtime ) )
     {
@@ -253,6 +260,11 @@ sub ImportContent {
     }
     
     $self->extract_extra_info( $ce );
+    
+    if((grep $_ eq $chd->{xmltvid}, @channels_no_hd) and defined($ce->{quality})) {
+    	delete $ce->{quality};
+    }
+    
     $dsh->AddProgramme( $ce );
     $programs++;
   }
@@ -279,7 +291,9 @@ sub extract_extra_info
 
   my( $ds ) = $self->{datastore};
 
-  my( $program_type, $category );
+  my( $program_type, $category, $season );
+  
+  $season = "";
 
   #
   # Try to extract category and program_type by matching strings
@@ -297,13 +311,18 @@ sub extract_extra_info
     $program_type = undef; 
   }
 
-  AddCategory( $ce, $program_type, $category );
-
   $ce->{title} =~ s/^Seriestart:\s*//;
   $ce->{title} =~ s/^Novellfilm:\s*//;
+  $ce->{title} =~ s/^Filmklubben\s+Norden:\s*//;
+  
+  # Sports
+  #if( $ce->{title} =~ /^(Sportspegeln|Sportnytt|Hockeykväll|Vintermagasin|Vinterstudion|Längdskidor|Skicross|X-Games|Handboll|Alpint|Ridsport|SM-vecka|Konståkning|VM-rally|Skidskytte|Extremsport|Svenska idrottsgalan).*$/x )
+ # {
+#
+#  }
 
   # Default aspect is 4:3.
-  $ce->{aspect} = "4:3";
+  #$ce->{aspect} = "4:3";
 
   for( my $i=0; $i<scalar(@sentences); $i++ )
   {
@@ -313,6 +332,7 @@ sub extract_extra_info
 	($sentences[$i] =~ /^fr.n (\d\d\d\d)\.*$/i) )
     {
       $ce->{production_date} = "$1-01-01";
+      $sentences[$i] = "";
     }
 
     if( $sentences[$i] eq "Bredbild." )
@@ -320,41 +340,149 @@ sub extract_extra_info
       $ce->{aspect} = "16:9";
       $sentences[$i] = "";
     }
+    elsif( my( $seasontext ) = ($sentences[$i] =~ /^(.*) säsongen./ ) )
+    {
+      $seasontext =~ s/ och sista//g;
+      $seasontext = lc($seasontext);
+      
+      $season = SeasonText($seasontext);
+      
+      #print("Text: $seasontext - Num: $season\n");
+      
+      # Only remove sentence if it could find a season
+      if($season ne "") {
+      	$sentences[$i] = "";
+      }
+    }
+    elsif( $sentences[$i] eq "4:3-format." )
+    {
+   	  print("HEJ\n");
+      $ce->{aspect} = "4:3";
+      $sentences[$i] = "";
+    }
+    elsif( $sentences[$i] =~ /^(Även|Från)
+     ((
+      \s+|
+      [A-Z]\S+|
+      i\s+[A-Z]\S+|
+      tidigare\s+i\s*dag|senare\s+i\s*dag|
+      tidigare\s+i\s*kväll|senare\s+i\s*kväll|
+      \d+\/\d+|
+      ,|och|samt
+     ))+
+     \..*
+     $/x )
+    {
+       $sentences[$i] = "";
+#      $self->parse_other_showings( $ce, $sentences[$i] );
+    }
+    elsif( $sentences[$i] =~ /Text(at|-tv)\s+(sid|sid.|sidan)*\s+\d+\./ )
+    {
+#      $ce->{subtitle} = 'sv,teletext';
+      $sentences[$i] = "";
+    }
+    elsif( $sentences[$i] eq "Visas i SVT Play." )
+    {
+      $sentences[$i] = "";
+    }
+    elsif( $sentences[$i] eq "5.1-ljud." )
+    {
+      $sentences[$i] = "";
+    }
+    elsif( $sentences[$i] eq "HD." )
+    {
+      # HD
+      $ce->{quality} = "HDTV";
+    
+      # Set somethiing?
+      $sentences[$i] = "";
+    }
+    elsif( $sentences[$i] =~ /Del\s+\d+\.*/ )
+    {
+      # If this program has an episode-number, it is by definition
+	  # a series (?). Svt often miscategorize series as movie.
+	  $ce->{program_type} = 'series';
+	  
+      my( $ep, $eps, $name, $episode, $dummy );
+      # Del 2 av 3: Pilot (episodename)
+ 	  ( $ce->{subtitle} ) = ($sentences[$i] =~ /:\s*(.+)\./);
+ 	  
+ 	  # norm
+ 	  $ce->{subtitle} = normLatin1($ce->{subtitle});
+ 	  
+ 	  # Del 2
+	  ( $dummy, $ep ) = ($sentences[$i] =~ /\b(Del|Avsnitt)\s+(\d+)/ );
+	  $episode = sprintf( " . %d .", $ep-1 ) if defined $ep;
+	
+	
+	
+	  # Del 2 av 3
+	  ( $dummy, $ep, $eps ) = ($sentences[$i] =~ /\b(Del|Avsnitt)\s+(\d+)\s*av\s*(\d+)/ );
+	  $episode = sprintf( " . %d/%d . ", $ep-1, $eps ) 
+	    if defined $eps;
+	  
+	  if( defined $episode ) {
+	    if( exists( $ce->{production_date} ) and $season eq "" ) {
+	      my( $year ) = ($ce->{production_date} =~ /(\d{4})-/ );
+	      $episode = ($year-1) . $episode;
+	    } elsif($season ne "") {
+	    	$episode = $season-1 . $episode;
+	    }
+	    $ce->{episode} = $episode;
+	  }
+ 	  
+ 	  $sentences[$i] = "";
+ 	}
+    elsif( my( $directors4 ) = ($sentences[$i] =~ /^Regi\s+och\s+manus:\s*(.*)/) )
+    {
+      # If this program has an director, it should be
+	  # a movie. If it isn't, please tag this DIRECTLY.
+	  $ce->{program_type} = 'movie';
+    
+      $ce->{directors} = parse_person_list( $directors4 );
+      $sentences[$i] = "";
+    }
     elsif( my( $directors ) = ($sentences[$i] =~ /^Regi:\s*(.*)/) )
     {
+      # If this program has an director, it should be
+	  # a movie. If it isn't, please tag this DIRECTLY.
+	  $ce->{program_type} = 'movie';
+    
       $ce->{directors} = parse_person_list( $directors );
+      $sentences[$i] = "";
+    }
+    elsif( my( $directors2 ) = ($sentences[$i] =~ /^I\s+regi\s+av\s+(.*)/) )
+    {
+      # If this program has an director, it should be
+	  # a movie. If it isn't, please tag this DIRECTLY.
+	  $ce->{program_type} = 'movie';
+	  
+      $ce->{directors} = parse_person_list( $directors2 );
       $sentences[$i] = "";
     }
     elsif( my( $actors ) = ($sentences[$i] =~ /^I rollerna:\s*(.*)/ ) )
     {
       $ce->{actors} = parse_person_list( $actors );
       $sentences[$i] = "";
-    }
-    elsif( $sentences[$i] =~ /^(�ven|Fr�n)
-     ((
-      \s+|
-      [A-Z]\S+|
-      i\s+[A-Z]\S+|
-      tidigare\s+i\s*dag|senare\s+i\s*dag|
-      tidigare\s+i\s*kv�ll|senare\s+i\s*kv�ll|
-      \d+\/\d+|
-      ,|och|samt
-     ))+
-     \.\s*
-     $/x )
+    }elsif( my( $actors2 ) = ($sentences[$i] =~ /^Medverkande:\s*(.*)/ ) )
     {
-#      $self->parse_other_showings( $ce, $sentences[$i] );
+      $ce->{actors} = parse_person_list( $actors2 );
+      $sentences[$i] = "";
+    }elsif( $sentences[$i] =~ /l.ngfilm/ ) {
+        $ce->{program_type} = "movie";
     }
-    elsif( $sentences[$i] =~ /^Text(at|-tv)\s+sid(an)*\s+\d+\.$/ )
-    {
-#      $ce->{subtitle} = 'sv,teletext';
-#      $sentences[$i] = "";
-    }
+  }
+  
+  # Parse the desc if it doesnt have a program_type
+  if(!defined($ce->{program_type})) {
+  	AddCategory( $ce, $program_type, $category );
+  } elsif(defined($ce->{program_type}) and $ce->{program_type} ne "movie") {
+  	AddCategory( $ce, $program_type, $category );
   }
   
   $ce->{description} = join_text( @sentences );
 
-  extract_episode( $ce );
+  #extract_episode( $ce );
 }
 
 sub parse_person_list
@@ -381,41 +509,6 @@ sub parse_person_list
   }
 
   return join( ", ", grep( /\S/, @persons ) );
-}
-
-sub extract_episode
-{
-  my( $ce ) = @_;
-
-  return if not defined( $ce->{description} );
-
-  my $d = $ce->{description};
-
-  # Try to extract episode-information from the description.
-  my( $ep, $eps );
-  my $episode;
-
-  my $dummy;
-
-  # Del 2
-  ( $dummy, $ep ) = ($d =~ /\b(Del|Avsnitt)\s+(\d+)/ );
-  $episode = sprintf( " . %d .", $ep-1 ) if defined $ep;
-
-  # Del 2 av 3
-  ( $dummy, $ep, $eps ) = ($d =~ /\b(Del|Avsnitt)\s+(\d+)\s*av\s*(\d+)/ );
-  $episode = sprintf( " . %d/%d . ", $ep-1, $eps ) 
-    if defined $eps;
-  
-  if( defined $episode ) {
-    if( exists( $ce->{production_date} ) ) {
-      my( $year ) = ($ce->{production_date} =~ /(\d{4})-/ );
-      $episode = ($year-1) . $episode;
-    }
-    $ce->{episode} = $episode;
-    # If this program has an episode-number, it is by definition
-    # a series (?). Svt often miscategorize series as movie.
-    $ce->{program_type} = 'series';
-  }
 }
 
 sub parse_other_showings
@@ -599,7 +692,7 @@ sub norm_desc
   $str =~ s/([\.!?])\s*\x{95}\s*/$1 /g;
   $str =~ s/\s*\x{95}\s*/. /g;
 
-  return norm( $str );
+  return normLatin1( $str );
 }
 
 sub norm_title
@@ -608,9 +701,45 @@ sub norm_title
 
   # Remove strange bullets.
   $str =~ s/\x{95}/ /g;
+  
+  # Remove premiere and nightmovie and stuff like that
+  $str =~ s/Premiär://g;
+  $str =~ s/Nattfilm://g;
+  $str =~ s/Filmklubben://g;
 
-  return norm( $str );
+  return normLatin1( $str );
 }
 
+sub SeasonText {
+  my( $seasonname ) = @_;
+
+  my( @seasons_1, @seasons_2 );
+  @seasons_1 = qw/första andra tredje fjärde femte sjätte/;
+  @seasons_2 = qw//;
+
+  my %seasons = ();
+
+  for( my $i = 0; $i < scalar(@seasons_1); $i++ ){
+    $seasons{$seasons_1[$i]} = $i+1;
+  }
+
+  for( my $i = 0; $i < scalar(@seasons_2); $i++ ){
+    $seasons{$seasons_2[$i]} = $i+1;
+  }
+
+  my $season = $seasons{$seasonname};
+  my $null = "";
+
+  return $season||$null;
+}
+
+sub in_array {
+    my ($arr, $search_for) = @_;
+
+    foreach my $value (\@$arr) {
+        return 1 if $value eq $search_for;
+    }
+    return 0;
+}
 
 1;

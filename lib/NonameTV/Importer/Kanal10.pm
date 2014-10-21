@@ -84,22 +84,32 @@ sub ImportContentFile
   my $date = undef;
   my @ces;
   my $description;
+  my $year;
 
   foreach my $div ($ns->get_nodelist) {
 
     my( $text ) = norm( $div->findvalue( '.' ) );
+    
+    # Get year from Program.versikt :year:
+    if( isYear( $text ) ) { # the line with the date in format 'Programöversikt 2011'
+        $year = ParseYear( $text );
+        progress("Kanal10: Year is $year");
+    }
+    
 
     if( isDate( $text ) ) { # the line with the date in format 'Måndag 11 Juli'
 
-      $date = ParseDate( $text );
+      $date = ParseDate( $text, $year );
 
       if( $date ) {
 
-        progress("Kanal10: $xmltvid: Date is $date");
+        progress("Kanal10: Date is $date");
 
         if( $date ne $currdate ) {
 
           if( $currdate ne "x" ){
+          	# save last day if we have it in memory
+  					FlushDayData( $xmltvid, $dsh , @ces );
             $dsh->EndBatch( 1 );
           }
 
@@ -122,36 +132,54 @@ sub ImportContentFile
 
       #$title = decode( "iso-8859-2" , $title );
 
-      progress("Kanal10: $xmltvid: $time - $title");
 
       my $ce = {
         channel_id => $chd->{id},
         start_time => $time,
-        title => $title,
       };
 
-      if( $desc ){
-      	my ($ep, $eps);
       	
-      	
-        	$ce->{description} = norm($desc);
-        	my $d = norm($desc);
-          # Del 2
-  				( $ep ) = ($d =~ /\bdel\s+(\d+)/ );
-  				$ce->{episode} = sprintf( " . %d .", $ep-1 ) if defined $ep;
+        
+        my $d = norm($desc);
+        if((not defined $d) or ($d eq "")) {
+        	$d = norm($title);
+        }
+       
+      # Episode
+      if($d) {
+      		my ($ep, $eps);
+      		
+          	# Del 2
+  			( $ep ) = ($d =~ /\bdel\s+(\d+)/ );
+  			$ce->{episode} = sprintf( " . %d .", $ep-1 ) if defined $ep;
 
   			# Del 2 av 3
   			( $ep, $eps ) = ($d =~ /\bdel\s+(\d+)\((\d+)\)/ );
   			$ce->{episode} = sprintf( " . %d/%d . ", $ep-1, $eps ) 
     		if defined $eps;
+    		
+    		
       }
 
-      $dsh->AddProgramme( $ce );
+	  # Just in case
+	  $ce->{title} = norm($title);
+
+	  # Remove repris (use this in the future?)
+      $title =~ s/\(Repris(.*)\)$//;
+      
+      # Set title
+      $ce->{title} = norm($title);
+      $ce->{description} = norm($desc) if $desc;
+
+			push( @ces , $ce );
 
     } else {
         # skip
     }
   }
+
+	# save last day if we have it in memory
+  FlushDayData( $xmltvid, $dsh , @ces );
 
   $dsh->EndBatch( 1 );
     
@@ -161,10 +189,12 @@ sub ImportContentFile
 sub isDate {
   my ( $text ) = @_;
 
+    #print("text:  $text\n");
+
   # format 'Måndag 11 06'
   if( $text =~ /^(M.ndag|Tisdag|Onsdag|Torsdag|Fredag|L.rdag|S.ndag)\s+\d+\s+\d+\$/i ){
     return 1;
-  } elsif( $text =~ /^(M.ndag|Tisdag|Onsdag|Torsdag|Fredag|L.rdag|S.ndag)\s+\d+\s+(januari|februari|mars|april|maj|juni|juli|augusti|september|november|december)$/i ){ # format 'Måndag 11 juli'
+  } elsif( $text =~ /^(M.ndag|Tisdag|Onsdag|Torsdag|Fredag|L.rdag|S.ndag)\s+\d+\s+(januari|februari|mars|april|maj|juni|juli|augusti|september|oktober|november|december)$/i ){ # format 'Måndag 11 juli'
     return 1;
   }
 
@@ -172,32 +202,33 @@ sub isDate {
 }
 
 sub ParseDate {
-  my( $text ) = @_;
-
-  my( $dayname, $day, $monthname, $month, $year );
+  my( $text, $year ) = @_;
+#print("text2:  $text\n");
+  my( $dayname, $day, $monthname, $month );
 
   # format 'Måndag 11 06'
   if( $text =~ /^(Måndag|Tisdag|Onsdag|Torsdag|Fredag|Lördag|Söndag)\s+\d+\.\d+\.\d+\.$/i ){
     ( $dayname, $day, $month, $year ) = ( $text =~ /^(\S+)\s+(\d+)\.(\d+)\.(\d+)\.$/ );
-  } elsif( $text =~ /^(M.ndag|Tisdag|Onsdag|Torsdag|Fredag|L.rdag|S.ndag)\s+\d+\s+(januari|februari|mars|april|maj|juni|juli|augusti|september|november|december)$/i ){ # format 'Måndag 11 Juli'
+  } elsif( $text =~ /^(M.ndag|Tisdag|Onsdag|Torsdag|Fredag|L.rdag|S.ndag)\s+\d+\s+(januari|februari|mars|april|maj|juni|juli|augusti|september|oktober|november|december)$/i ){ # format 'Måndag 11 Juli'
     ( $dayname, $day, $monthname ) = ( $text =~ /^(\S+)\s+(\d+)\s+(\S+)$/i );
 
     $month = MonthNumber( $monthname, 'sv' );
   }
 	
-my $dt_now = DateTime->now();
+#my $dt_now = DateTime->now();
 
+print("day: $day, month: $month, year: $year\n");
 
   my $dt = DateTime->new(
-  				year => $dt_now->year,
+  				year => $year,
     			month => $month,
     			day => $day,
       		);
   
   # Add a year if the month is January
-  if($month eq 1) {
-    	$dt->add( year => 1 );
-  }
+  #if($month eq 1) {
+  #  	$dt->add( year => 1 );
+  #}
 
   #return sprintf( '%d-%02d-%02d', $year, $month, $day );
   return $dt->ymd("-");
@@ -233,6 +264,42 @@ sub ParseShow {
   $time = sprintf( "%02d:%02d", $hour, $min );
 
   return( $time, $title, $desc );
+}
+
+sub isYear {
+  my ( $text ) = @_;
+
+  # format 'Programöversikt 2011 (Programtablå)'
+  if( $text =~ /Program.versikt\s+\d+\s*/i ){
+    return 1;
+  }
+
+  return 0;
+}
+
+sub ParseYear {
+  my( $text ) = @_;
+  my( $year, $dummy );
+
+  # format 'Måndag 11 06'
+  if( $text =~ /(Program.versikt)\s+\d+\s+/i ){ # format 'Måndag 11 Juli'
+    ( $dummy, $year ) = ( $text =~ /(\S+)\s+(\d+)\s+(\S+)/i );
+  }
+  return $year;
+}
+
+
+sub FlushDayData {
+  my ( $xmltvid, $dsh , @data ) = @_;
+
+    if( @data ){
+      foreach my $element (@data) {
+
+        progress("Kanal10: $element->{start_time} - $element->{title}");
+
+        $dsh->AddProgramme( $element );
+      }
+    }
 }
 
 1;

@@ -67,7 +67,7 @@ sub ImportContentFile
   my $schedlang = $chd->{sched_lang};
   progress( "PlayboyTV: $chd->{xmltvid}: Setting schedules language to '$schedlang'" );
 
-  return if( $file !~ /\.doc$/i );
+  #return if( $file !~ /\.doc$/i );
 
   my $channel_id = $chd->{id};
   my $channel_xmltvid = $chd->{xmltvid};
@@ -159,6 +159,7 @@ sub ImportFull
 
       ( $start, $title ) = ($text =~ /^(\d+\:\d+)\s+(.*)\s*$/ );
       $start =~ tr/\./:/;
+      $title =~ s/\s+\(18\+\)//g if $title;
 
     } elsif( $text =~ /^\s*Programme Schedule - \s*$/ ){
 
@@ -334,7 +335,7 @@ sub ParseDate
     return undef;
   }
 
-  $year += 2000 if $year lt 100;
+  $year+= 2000 if $year< 100;
   
   return sprintf( '%d-%02d-%02d', $year, $month, $day );
 }

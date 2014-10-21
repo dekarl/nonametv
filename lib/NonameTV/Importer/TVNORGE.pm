@@ -2,7 +2,7 @@ package NonameTV::Importer::TVNORGE;
 
 =pod
 
-This importer works for both TVNorge and FEM.
+This importer works for both TVNorge, MAX and FEM.
 It downloads per day xml files from respective channel's
 pressweb. The files are in xml-style
 
@@ -12,7 +12,7 @@ use DateTime;
 use XML::LibXML;
 use HTTP::Date;
 
-use NonameTV qw/ParseXml norm AddCategory/;
+use NonameTV qw/ParseXml norm AddCategory AddCountry/;
 use NonameTV::Log qw/w progress error f/;
 use NonameTV::DataStore::Helper;
 use NonameTV::Importer::BaseDaily;
@@ -27,11 +27,13 @@ sub new {
 
 
     $self->{MinDays} = 0 unless defined $self->{MinDays};
-    $self->{MaxDays} = 4 unless defined $self->{MaxDays};
+    $self->{MaxDays} = 25 unless defined $self->{MaxDays};
 
     defined( $self->{UrlRoot} ) or die "You must specify UrlRoot";
     my $dsh = NonameTV::DataStore::Helper->new( $self->{datastore}, "Europe/Vienna" );
   	$self->{datastorehelper} = $dsh;
+  	
+  	$self->{datastore}->{augment} = 1;
 
     return $self;
 }
@@ -126,8 +128,23 @@ sub ImportContent
 	my $title_programme = $sc->findvalue( './title' );
 	my $title = norm($title_programme) || norm($title_original);
 
-    my $start = $sc->findvalue( './starttime' );
+	$title =~ s/^Premiere: //g;
+	$title =~ s/^Sesongpremiere: //g;
 
+    my $start = $sc->findvalue( './starttime' );
+    my $end   = $sc->findvalue( './endtime' );
+
+    # Count minutes between two times
+    my $format = DateTime::Format::Strptime->new(
+        pattern => '%Y-%m-%d %H:%M',
+    );
+
+    my $start2 = $format->parse_datetime( $start );
+    my $stop2  = $format->parse_datetime( $end );
+    my $durat  = $start2->delta_ms($stop2)->in_units('minutes');
+    ## END
+
+    my $hd = $sc->findvalue( './hd' );
     
     my $desc = undef;
     my $desc_episode = $sc->findvalue( './shortdescription' );
@@ -137,10 +154,12 @@ sub ImportContent
 	my $production_year = $sc->findvalue( './productionyear' );
 	my $episode =  $sc->findvalue( './episode' );
 	my $numepisodes =  $sc->findvalue( './numepisodes' );
+	my $subtitle = $sc->findvalue( './episodetitle' );
+
 
 	# TVNorge seems to have the season in the originaltitle, weird.
-	# år 2
-  my ( $dummy, $season ) = ($title_original =~ /\b(år)\s+(\d+)/ );
+	# ï¿½r 2
+    my ( $dummy, $season ) = ($title_original =~ /(.r|sesong)\s*(\d+)$/ );
 
 
 	progress("TVNorge: $chd->{xmltvid}: $start - $title");
@@ -150,6 +169,7 @@ sub ImportContent
       channel_id  => $chd->{id},
       description => norm($desc),
       start_time  => $self->create_dt( $start ),
+      end_time    => $self->create_dt( $end ),
     };
     
     
@@ -157,23 +177,92 @@ sub ImportContent
     {
       $ce->{production_date} = "$1-01-01";
     }
-    
-    
+
+    $genre =~ s/fra (\d+)//g;
+
     if( $genre ){
-			my($program_type, $category ) = $ds->LookupCat( 'TVNorge', $genre );
-			AddCategory( $ce, $program_type, $category );
+        my($country, $genretext) = ($genre =~ /^(.*?)\s+(.*?)$/);
+        $country = norm($country);
+        $genretext = norm($genretext);
+        $genretext =~ s/\.$//g;
+        $country =~ s/\.$//g;
+
+        $genretext =~ s/\[(.*?)\]//g;
+
+		my($program_type, $category ) = $ds->LookupCat( 'TVNorge', $genretext );
+		AddCategory( $ce, $program_type, $category );
+
+		my($country2 ) = $ds->LookupCountry( 'TVNorge', $country );
+        AddCountry( $ce, $country2 );
+    }
+
+    # Director
+    my $director = norm($sc->findvalue( './director' ));
+    if(defined($director) and $director ne "") {
+        $ce->{directors} = parse_person_list($director);
+        $ce->{program_type} = 'movie';
+    }
+
+    # Hosts
+    my $host = norm($sc->findvalue( './host' ));
+    if(defined($host) and $host ne "") {
+        $ce->{presenters} = parse_person_list($host);
+    }
+
+    # Actors
+    my @actors;
+    my $acts = $sc->find( './/actors' );
+    foreach my $act ($acts->get_nodelist)
+    {
+        my $name = $act->to_literal;
+
+        # Only push actors with an actual name
+        if($name ne "") {
+            push @actors, $name;
+        }
+    }
+
+    if( scalar( @actors ) > 0 )
+    {
+        $ce->{actors} = join ";", @actors;
+    }
+
+	# Episodes
+	if(($season) and ($episode) and ($numepisodes)) {
+		$ce->{episode} = sprintf( "%d . %d/%d . ", $season-1, $episode-1, $numepisodes );
+	} elsif(($season) and ($episode) and (!$numepisodes)) {
+		$ce->{episode} = sprintf( "%d . %d . ", $season-1, $episode-1 );
+	} elsif((!$season) and ($episode) and ($numepisodes)) {
+		$ce->{episode} = sprintf( " . %d/%d . ", $episode-1, $numepisodes );
+	} elsif((!$season) and ($episode) and (!$numepisodes)) {
+		 $ce->{episode} = sprintf( " . %d . ", $episode-1 );
 	}
 
-		# Episodes
-		if(($season) and ($episode) and ($numepisodes)) {
-			$ce->{episode} = sprintf( "%d . %d/%d . ", $season-1, $episode-1, $numepisodes );
-		} elsif(($season) and ($episode) and (!$numepisodes)) {
-			$ce->{episode} = sprintf( "%d . %d . ", $season-1, $episode-1 );
-		} elsif((!$season) and ($episode) and ($numepisodes)) {
-			$ce->{episode} = sprintf( " . %d/%d . ", $episode-1, $numepisodes );
-		} elsif((!$season) and ($episode) and (!$numepisodes)) {
-			 $ce->{episode} = sprintf( " . %d . ", $episode-1 );
-		}
+	# HD
+	if($hd eq "true")
+	{
+	    $ce->{quality} = 'HDTV';
+	}
+
+	# original title
+    if(defined($title_original) and $title_original =~ /, (.r|sesong) (.*)/i) {
+  	    $title_original =~ s/, (.r|sesong) (.*)//i;
+  	}
+
+  	$ce->{original_title} = norm($title_original) if defined($title_original) and $ce->{title} ne norm($title_original) and norm($title_original) ne "";
+
+    if($subtitle ne "") {
+        if($subtitle =~ /(.r|sesong)\s*(\d+), (\d+)\. del/i) {
+            $ce->{episode} = sprintf( "%d . %d . ", $2-1, $3-1 );
+        } else {
+            $ce->{subtitle} = norm(ucfirst(lc($subtitle)));
+        }
+    }
+
+    # If duration is higher than 100 minutes (1h 40min) then its a movie
+    if($durat > 100 and $subtitle eq "" and not defined($ce->{episode})) {
+        $ce->{program_type} = 'movie';
+    }
 
 
     $dsh->AddProgramme( $ce );
@@ -181,6 +270,20 @@ sub ImportContent
   
   # Success
   return 1;
+}
+
+sub parse_person_list
+{
+  my( $str ) = @_;
+
+  my @persons = split( /\s*,\s*/, $str );
+  foreach (@persons)
+  {
+    # The character name is sometimes given . Remove it.
+    s/^.*\s+-\s+//;
+  }
+
+  return join( ";", grep( /\S/, @persons ) );
 }
 
 sub create_dt
